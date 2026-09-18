@@ -3,7 +3,8 @@
 import { useCallback, useState } from "react";
 import { DownloadCloud, RefreshCw } from "@/ui/icon-registry";
 import { ModelLogo } from "@/ui/model-logo";
-import { StatusPill } from "@/ui";
+import { ResourceDrawer, ResourceDrawerSection, ResourceFact } from "@/ui/resource-drawer";
+import { ModelButton, StatusPill } from "@/ui";
 import { useMountSubscription } from "@/hooks/use-mount-subscription";
 import { useRealtimeStatusStore } from "@/hooks/realtime-status-store";
 import { safeJson } from "@/features/agent/safe-json";
@@ -12,7 +13,6 @@ import { cx } from "@/ui/utils";
 import {
   DataRow,
   EndCell,
-  GroupRow,
   HeadCell,
   LeadCell,
   NumCell,
@@ -23,10 +23,8 @@ import {
 import { useHardwareProfile } from "./picks-shared";
 import { downloadProgressText } from "./downloads-tab";
 
-interface RegistryRecipeRow {
+interface RegistryModelVariant {
   recipeId: string;
-  hfId: string;
-  name: string;
   quant: string;
   precision: string | null;
   format: string | null;
@@ -34,6 +32,18 @@ interface RegistryRecipeRow {
   filesize: string;
   requiredGb: number;
   status: "validated" | "candidate";
+  engine: string | null;
+  engineVersion: string | null;
+  architecture: string | null;
+  measuredOnThisClass: boolean;
+}
+
+interface RegistryModel {
+  hfId: string;
+  name: string;
+  owner: string;
+  variants: RegistryModelVariant[];
+  bestVariant: RegistryModelVariant;
   params: string | null;
   activeParams: string | null;
   contextTokens: number | null;
@@ -44,45 +54,48 @@ interface RegistryRecipeRow {
     tools: boolean;
     vision: boolean;
   };
-  engine: string | null;
-  engineVersion: string | null;
-  hardwareId: string;
-  hardwareLabel: string;
+  engines: string[];
   measuredOnThisClass: boolean;
 }
 
-interface RegistryRecipesMeta {
+interface RegistryModelsMeta {
   readonly updated: string | null;
-  readonly picks: readonly RegistryRecipeRow[];
+  readonly models: readonly RegistryModel[];
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 interface CacheEntry {
-  readonly result: RegistryRecipesMeta;
+  readonly result: RegistryModelsMeta;
   readonly expiresAt: number;
 }
 
-const registryRecipesCache = new Map<string, CacheEntry>();
+const registryModelsCache = new Map<string, CacheEntry>();
 
-const readCache = (key: string): RegistryRecipesMeta | null => {
-  const entry = registryRecipesCache.get(key);
+const readCache = (key: string): RegistryModelsMeta | null => {
+  const entry = registryModelsCache.get(key);
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
-    registryRecipesCache.delete(key);
+    registryModelsCache.delete(key);
     return null;
   }
   return entry.result;
 };
 
-const writeCache = (key: string, result: RegistryRecipesMeta): void => {
-  registryRecipesCache.set(key, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+const writeCache = (key: string, result: RegistryModelsMeta): void => {
+  registryModelsCache.set(key, { result, expiresAt: Date.now() + CACHE_TTL_MS });
 };
 
 const formatContext = (tokens: number | null): string => {
   if (tokens == null) return "—";
   if (tokens >= 1024) return `${(tokens / 1024).toFixed(0)}K`;
   return tokens.toLocaleString();
+};
+
+const formatParams = (params: string | null, active: string | null): string => {
+  if (!params) return "—";
+  if (active && active !== params) return `${active}A / ${params}B`;
+  return `${params}B`;
 };
 
 const describeHardware = (hardware: {
@@ -100,20 +113,13 @@ const describeHardware = (hardware: {
   return count > 1 ? `${count} GPUs (${unique.join(" + ")})` : unique.join(" + ");
 };
 
-const groupByEngine = (
-  picks: readonly RegistryRecipeRow[],
-): Array<{ engine: string; rows: RegistryRecipeRow[] }> => {
-  const order: string[] = [];
-  const byEngine = new Map<string, RegistryRecipeRow[]>();
-  for (const pick of picks) {
-    const engine = pick.engine ?? "unknown";
-    if (!byEngine.has(engine)) {
-      byEngine.set(engine, []);
-      order.push(engine);
-    }
-    byEngine.get(engine)!.push(pick);
-  }
-  return order.map((engine) => ({ engine, rows: byEngine.get(engine)! }));
+const sizeRangeLabel = (variants: readonly RegistryModelVariant[]): string => {
+  if (variants.length === 0) return "—";
+  const sizes = variants.map((v) => v.filesizeGb);
+  const min = Math.min(...sizes);
+  const max = Math.max(...sizes);
+  const format = (n: number) => `${Math.round(n * 10) / 10}gb`;
+  return min === max ? format(min) : `${format(min)}–${format(max)}`;
 };
 
 export function RegistryPicksSection() {
@@ -121,9 +127,10 @@ export function RegistryPicksSection() {
   const realtimeSnapshot = useRealtimeStatusStore();
   const realtimeGpus = realtimeSnapshot.gpus;
   const { downloadsByModel, startingModelIds, startDownload } = useDownloads();
-  const [meta, setMeta] = useState<RegistryRecipesMeta>({ updated: null, picks: [] });
+  const [meta, setMeta] = useState<RegistryModelsMeta>({ updated: null, models: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedModel, setSelectedModel] = useState<RegistryModel | null>(null);
 
   const refresh = useCallback(
     async (force = false) => {
@@ -136,7 +143,7 @@ export function RegistryPicksSection() {
         poolGb: String(Math.round(hardware.poolGb)),
       });
       if (gpuName) params.set("gpuName", gpuName);
-      const url = `/api/setup/registry-recipes?${params}`;
+      const url = `/api/setup/registry-models?${params}`;
 
       if (!force) {
         const cached = readCache(url);
@@ -152,15 +159,15 @@ export function RegistryPicksSection() {
       setError(null);
       try {
         const response = await fetch(url, { cache: "no-store" });
-        const payload = await safeJson<RegistryRecipesMeta>(response);
-        const result: RegistryRecipesMeta = {
+        const payload = await safeJson<RegistryModelsMeta>(response);
+        const result: RegistryModelsMeta = {
           updated: payload.updated ?? null,
-          picks: payload.picks ?? [],
+          models: payload.models ?? [],
         };
         setMeta(result);
         writeCache(url, result);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load registry recipes");
+        setError(err instanceof Error ? err.message : "Failed to load registry models");
       } finally {
         setLoading(false);
       }
@@ -179,9 +186,10 @@ export function RegistryPicksSection() {
     [startDownload],
   );
 
-  const groups = groupByEngine(meta.picks);
-  const validatedCount = meta.picks.filter((pick) => pick.status === "validated").length;
-  const runnableCount = meta.picks.filter((pick) => pick.requiredGb <= hardware.poolGb).length;
+  const validatedCount = meta.models.filter((model) =>
+    model.variants.some((v) => v.status === "validated"),
+  ).length;
+  const totalVariants = meta.models.reduce((sum, model) => sum + model.variants.length, 0);
 
   return (
     <div className="space-y-7">
@@ -194,7 +202,7 @@ export function RegistryPicksSection() {
           </span>
           <span className="truncate text-[length:var(--fs-sm)] text-(--ui-muted)">
             {hardware.poolGb > 0
-              ? `recipes that fit your ${Math.round(hardware.poolGb)} GB pool`
+              ? `models that fit your ${Math.round(hardware.poolGb)} GB pool`
               : "Connect the controller to check hardware fit."}
           </span>
         </div>
@@ -219,159 +227,111 @@ export function RegistryPicksSection() {
 
       {error ? <div className="text-[length:var(--fs-sm)] text-(--err)">{error}</div> : null}
 
-      {!loading && meta.picks.length === 0 ? (
+      {!loading && meta.models.length === 0 ? (
         <div className="text-[length:var(--fs-sm)] text-(--ui-muted)">
-          No registry recipes matched your hardware. Try the Recommended tab for the curated
-          catalog.
+          No registry models matched your hardware. Try the Recommended tab for the curated catalog.
         </div>
       ) : (
         <TableFrame>
           <thead>
             <tr>
               <HeadCell>Model</HeadCell>
-              <HeadCell numeric title="No intelligence index is published for registry recipes">
+              <HeadCell numeric title="Engines the registry has recipes for on this hardware">
+                Engines
+              </HeadCell>
+              <HeadCell numeric title="No intelligence index is published for registry models">
                 Index
               </HeadCell>
               <HeadCell numeric>Params</HeadCell>
               <HeadCell numeric>Context</HeadCell>
-              <HeadCell numeric title="Memory the weights need; 1.5x is the runnable headroom">
+              <HeadCell numeric title="Size range across the model's variants">
                 Memory
               </HeadCell>
               <HeadCell numeric>Status</HeadCell>
             </tr>
           </thead>
-          {groups.map((group) => (
-            <tbody key={group.engine}>
-              <GroupRow
-                colSpan={6}
-                label={`${group.engine} recipes`}
-                blurb={
-                  hardware.poolGb > 0
-                    ? `${group.rows.filter((row) => row.requiredGb <= hardware.poolGb).length} of ${group.rows.length} run on this rig`
-                    : `${group.rows.length} recipes`
-                }
-                right={
-                  group.rows.filter((row) => row.status === "validated").length > 0
-                    ? `${group.rows.filter((row) => row.status === "validated").length} validated`
-                    : "candidate only"
-                }
-              />
-              {group.rows.map((pick) => (
-                <RegistryTableRow
-                  key={pick.recipeId}
-                  pick={pick}
-                  poolGb={hardware.poolGb}
-                  isStarting={startingModelIds.has(pick.hfId)}
-                  download={downloadsByModel.get(pick.hfId) ?? null}
-                  onDownload={handleDownload}
-                />
-              ))}
-            </tbody>
-          ))}
+          <tbody>
+            {meta.models.map((model) => (
+              <DataRow
+                key={model.hfId}
+                onOpen={() => setSelectedModel(model)}
+                ariaLabel={`Open ${model.name} variants`}
+              >
+                <LeadCell>
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <ModelLogo
+                      modelId={model.hfId}
+                      author={model.owner}
+                      label={model.name}
+                      size="sm"
+                      className="rounded-md"
+                    />
+                    <span className="min-w-0 truncate text-[length:var(--fs-md)] font-medium text-(--fg)">
+                      {model.name}
+                    </span>
+                    <span className="shrink-0 text-[length:var(--fs-sm)] text-(--dim)/70">
+                      {model.owner}
+                    </span>
+                    <span className="shrink-0 rounded border border-(--ui-border) px-1.5 py-px font-mono text-[length:var(--fs-xs)] text-(--ui-muted)">
+                      {model.variants.length} var
+                    </span>
+                  </div>
+                </LeadCell>
+
+                <NumCell>{model.engines.join(", ") || "—"}</NumCell>
+
+                <NumCell>
+                  <span className="text-[length:var(--fs-sm)] text-(--dim)/50">not rated</span>
+                </NumCell>
+
+                <NumCell>{formatParams(model.params, model.activeParams)}</NumCell>
+
+                <NumCell>{formatContext(model.contextTokens)}</NumCell>
+
+                <NumCell>{sizeRangeLabel(model.variants)}</NumCell>
+
+                <EndCell>
+                  <ModelActions
+                    hfId={model.hfId}
+                    isStarting={startingModelIds.has(model.hfId)}
+                    download={downloadsByModel.get(model.hfId) ?? null}
+                    onDownload={() => handleDownload(model.hfId)}
+                  />
+                </EndCell>
+              </DataRow>
+            ))}
+          </tbody>
         </TableFrame>
       )}
 
       <p className="text-[length:var(--fs-xs)] text-(--dim)/70">
-        {meta.picks.length > 0
-          ? `Index — registry. ${validatedCount} validated, ${runnableCount} of ${meta.picks.length} fit in ${Math.round(hardware.poolGb)} GB. Refresh above to re-query.`
+        {meta.models.length > 0
+          ? `Index — registry. ${validatedCount} of ${meta.models.length} models have at least one validated variant. ${totalVariants} variants total. Refresh above to re-query.`
           : "Index — registry. Refresh above to re-query."}
       </p>
+
+      {selectedModel ? (
+        <RegistryModelDrawer
+          model={selectedModel}
+          downloadsByModel={downloadsByModel}
+          startingModelIds={startingModelIds}
+          onClose={() => setSelectedModel(null)}
+          onDownload={(hfId) => handleDownload(hfId)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function RegistryTableRow({
-  pick,
-  poolGb,
+function ModelActions({
+  hfId,
   isStarting,
   download,
   onDownload,
 }: {
-  pick: RegistryRecipeRow;
-  poolGb: number;
+  hfId: string;
   isStarting: boolean;
   download: { status: string } | null;
-  onDownload: (hfId: string) => void;
-}) {
-  const owner = pick.hfId.split("/")[0]?.trim();
-  const overPool = poolGb > 0 && pick.requiredGb > poolGb;
-  const badge = pick.precision ?? pick.format ?? pick.quant.toUpperCase();
-  return (
-    <DataRow dimmed={overPool} ariaLabel={`Open ${pick.name} details`}>
-      <LeadCell>
-        <div className="flex min-w-0 items-center gap-2.5">
-          <ModelLogo
-            modelId={pick.hfId}
-            author={owner}
-            label={pick.name}
-            size="sm"
-            className="rounded-md"
-          />
-          <span className="min-w-0 truncate text-[length:var(--fs-md)] font-medium text-(--fg)">
-            {pick.name}
-          </span>
-          <span className="shrink-0 text-[length:var(--fs-sm)] text-(--dim)/70">{owner}</span>
-          <span className="shrink-0 rounded border border-(--ui-border) px-1.5 py-px font-mono text-[length:var(--fs-xs)] text-(--ui-muted)">
-            {badge.toUpperCase()}
-          </span>
-        </div>
-      </LeadCell>
-
-      <NumCell>
-        <span className="text-[length:var(--fs-sm)] text-(--dim)/50">not rated</span>
-      </NumCell>
-
-      <NumCell>
-        {pick.params ? `${pick.params}B` : "—"}
-        {pick.activeParams && pick.activeParams !== pick.params ? (
-          <span className="text-(--dim)/60"> · {pick.activeParams}B active</span>
-        ) : null}
-      </NumCell>
-
-      <NumCell>{formatContext(pick.contextTokens)}</NumCell>
-
-      <NumCell
-        sub={<PoolCell fit={{ over: overPool }} poolGb={poolGb} requiredGb={pick.requiredGb} />}
-      >
-        <span className="text-(--fg)">{pick.filesize}</span>
-      </NumCell>
-
-      <EndCell>
-        <RegistryStatusCell
-          status={pick.status}
-          download={download}
-          isStarting={isStarting}
-          onDownload={() => onDownload(pick.hfId)}
-        />
-      </EndCell>
-    </DataRow>
-  );
-}
-
-function PoolCell({
-  fit,
-  poolGb,
-  requiredGb,
-}: {
-  fit: { over: boolean };
-  poolGb: number;
-  requiredGb: number;
-}) {
-  if (poolGb <= 0 || requiredGb <= 0) return <span>—</span>;
-  if (fit.over) return <span>over pool</span>;
-  const percent = (requiredGb / poolGb) * 100;
-  return <span>{percent < 1 ? "<1% of pool" : `${Math.round(percent)}% of pool`}</span>;
-}
-
-function RegistryStatusCell({
-  status,
-  download,
-  isStarting,
-  onDownload,
-}: {
-  status: "validated" | "candidate";
-  download: { status: string } | null;
-  isStarting: boolean;
   onDownload: () => void;
 }) {
   if (isStarting) return <StatusText>starting…</StatusText>;
@@ -381,12 +341,130 @@ function RegistryStatusCell({
   if (download?.status === "completed") return <StatusText>on disk</StatusText>;
   if (download?.status === "failed") return <StatusText tone="error">failed</StatusText>;
   return (
-    <div className="flex items-center justify-end gap-2">
-      <StatusPill tone={status === "validated" ? "good" : "info"}>{status}</StatusPill>
-      <RowAction onClick={onDownload}>
-        <DownloadCloud className="h-3 w-3" />
-        Download
-      </RowAction>
+    <RowAction onClick={onDownload}>
+      <DownloadCloud className="h-3 w-3" />
+      Download
+    </RowAction>
+  );
+}
+
+function RegistryModelDrawer({
+  model,
+  downloadsByModel,
+  startingModelIds,
+  onClose,
+  onDownload,
+}: {
+  model: RegistryModel;
+  downloadsByModel: Map<string, { status: string }>;
+  startingModelIds: Set<string>;
+  onClose: () => void;
+  onDownload: (hfId: string) => void;
+}) {
+  const validatedCount = model.variants.filter((v) => v.status === "validated").length;
+  return (
+    <ResourceDrawer
+      title={model.name}
+      icon={<ModelLogo modelId={model.hfId} author={model.owner} label={model.name} size="sm" />}
+      badge={
+        validatedCount > 0 ? (
+          <StatusPill tone="good">{validatedCount} validated</StatusPill>
+        ) : (
+          <StatusPill tone="info">candidate</StatusPill>
+        )
+      }
+      status={`${model.owner} · ${formatParams(model.params, model.activeParams)}`}
+      footer={
+        <>
+          <ModelButton onClick={onClose}>Done</ModelButton>
+        </>
+      }
+      onClose={onClose}
+    >
+      <p className="text-[length:var(--fs-md)] leading-6 text-(--ui-muted)">
+        {model.engines.length > 0
+          ? `Engine${model.engines.length === 1 ? "" : "s"}: ${model.engines.join(", ")}.`
+          : "No engine listed in the registry for this hardware."}
+      </p>
+
+      <ResourceDrawerSection
+        title={`Variants (${model.variants.length})`}
+        description="Pick the build that fits your rig and start the download."
+      >
+        {model.variants.map((variant) => (
+          <VariantRow
+            key={variant.recipeId}
+            variant={variant}
+            isStarting={startingModelIds.has(model.hfId)}
+            download={downloadsByModel.get(model.hfId) ?? null}
+            onDownload={() => onDownload(model.hfId)}
+          />
+        ))}
+      </ResourceDrawerSection>
+
+      <ResourceDrawerSection title="Model">
+        <ResourceFact label="Repository" value={model.hfId} />
+        {model.architecture ? (
+          <ResourceFact label="Architecture" value={model.architecture} />
+        ) : null}
+        <ResourceFact label="Parameters" value={formatParams(model.params, model.activeParams)} />
+        <ResourceFact
+          label="Max context"
+          value={`${model.contextTokens?.toLocaleString() ?? "—"} tokens`}
+        />
+        {model.capabilities.chat ? <ResourceFact label="Capabilities" value="chat" /> : null}
+        {model.capabilities.vision ? <ResourceFact label="Vision" value="yes" /> : null}
+        {model.capabilities.reasoning ? <ResourceFact label="Reasoning" value="yes" /> : null}
+        {model.capabilities.tools ? <ResourceFact label="Tools" value="yes" /> : null}
+      </ResourceDrawerSection>
+    </ResourceDrawer>
+  );
+}
+
+function VariantRow({
+  variant,
+  isStarting,
+  download,
+  onDownload,
+}: {
+  variant: RegistryModelVariant;
+  isStarting: boolean;
+  download: { status: string } | null;
+  onDownload: () => void;
+}) {
+  const badge = (variant.precision ?? variant.format ?? variant.quant).toUpperCase();
+  const busy = isStarting || download?.status === "downloading" || download?.status === "paused";
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-(--ui-border)/40 py-3 last:border-b-0">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-medium text-(--fg)">{badge}</span>
+          <span className="font-mono text-[length:var(--fs-xs)] text-(--ui-muted)">
+            {variant.filesize}
+          </span>
+          <span className="font-mono text-[length:var(--fs-xs)] text-(--ui-muted)">
+            · needs ~{variant.requiredGb} GB
+          </span>
+          {variant.engine ? (
+            <span className="font-mono text-[length:var(--fs-xs)] text-(--ui-muted)">
+              · {variant.engine}
+              {variant.engineVersion ? ` ${variant.engineVersion}` : ""}
+            </span>
+          ) : null}
+          {variant.status === "validated" ? (
+            <StatusPill tone="good">validated</StatusPill>
+          ) : (
+            <StatusPill tone="info">candidate</StatusPill>
+          )}
+        </div>
+        <div className="mt-1 font-mono text-[length:var(--fs-xs)] text-(--ui-muted)/80">
+          {variant.recipeId}
+        </div>
+      </div>
+      <ModelButton tone="primary" disabled={busy} onClick={onDownload}>
+        <DownloadCloud className={cx("h-3 w-3", busy ? "animate-pulse" : "")} />
+        {busy ? "Working" : "Download"}
+      </ModelButton>
     </div>
   );
 }
