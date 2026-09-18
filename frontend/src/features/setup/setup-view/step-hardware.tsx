@@ -2,7 +2,9 @@
 
 import { Button, Checkbox } from "@/ui";
 import { SettingsGroup, SettingsNotice } from "@/features/settings/settings-ui";
+import { TableFrame } from "@/features/recipes/recipes-content/catalog-table-shell";
 import {
+  ENGINE_TABLE_MIN_WIDTH,
   MANAGED_RUNTIME_BACKENDS,
   ManagedRuntimeInstallRows,
   RuntimeTargetRows,
@@ -71,24 +73,29 @@ export function StepHardware({
         title="Runtimes"
         description="Managed engines for this hardware. Install what the model you pick needs — or let the next step decide."
       >
-        <ManagedRuntimeInstallRows
-          backends={managedBackends}
-          jobs={runtimeJobs}
-          targets={runtimeTargets}
-          onInstall={installRuntime}
-          onUpdateTarget={updateRuntimeTarget}
-        />
-        {visibleTargets.length > 0 ? (
-          <RuntimeTargetRows
-            targets={visibleTargets}
-            jobs={runtimeJobs}
-            onAction={updateRuntimeTarget}
-          />
-        ) : (
+        <TableFrame minWidthClass={ENGINE_TABLE_MIN_WIDTH}>
+          <tbody>
+            <ManagedRuntimeInstallRows
+              backends={managedBackends}
+              jobs={runtimeJobs}
+              targets={runtimeTargets}
+              onInstall={installRuntime}
+              onUpdateTarget={updateRuntimeTarget}
+            />
+            {visibleTargets.length > 0 ? (
+              <RuntimeTargetRows
+                targets={visibleTargets}
+                jobs={runtimeJobs}
+                onAction={updateRuntimeTarget}
+              />
+            ) : null}
+          </tbody>
+        </TableFrame>
+        {visibleTargets.length === 0 ? (
           <SettingsNotice tone="info" className="m-3">
             {hardware.runtime}
           </SettingsNotice>
-        )}
+        ) : null}
       </SettingsGroup>
 
       <div className="flex items-center justify-between gap-4">
