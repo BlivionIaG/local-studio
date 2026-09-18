@@ -17,6 +17,10 @@ export class RegistryTimeoutError extends Schema.TaggedErrorClass<RegistryTimeou
 
 export type RegistryError = RegistryFetchError | RegistryDecodeError | RegistryTimeoutError;
 
+export const ProvenanceSchema = Schema.Struct({
+  captured_at: Schema.optional(Schema.String),
+});
+
 export const HuggingFacePointerSchema = Schema.Struct({
   repository: Schema.optional(Schema.String),
 });
@@ -29,10 +33,22 @@ export const ModelPointerSchema = Schema.Struct({
   huggingface: Schema.optional(HuggingFacePointerSchema),
 });
 
+export const WeightsSchema = Schema.Struct({
+  format: Schema.optional(Schema.String),
+  precision: Schema.optional(Schema.String),
+  size_gb: Schema.optional(Schema.Number),
+});
+
 export const ModelInstancePointerSchema = Schema.Struct({
   id: Schema.String,
   precision: Schema.optional(Schema.String),
-  weights: Schema.optional(Schema.Number),
+  weights: Schema.optional(WeightsSchema),
+  provenance: Schema.optional(ProvenanceSchema),
+});
+
+export const HardwareMemorySchema = Schema.Struct({
+  vram_gb: Schema.optional(Schema.NullOr(Schema.Number)),
+  cpu_memory_gb: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 
 export const HardwarePointerSchema = Schema.Struct({
@@ -41,6 +57,9 @@ export const HardwarePointerSchema = Schema.Struct({
   vendor: Schema.optional(Schema.String),
   memory_gb: Schema.optional(Schema.Number),
   accelerator_memory_gb: Schema.optional(Schema.Number),
+  memory: Schema.optional(HardwareMemorySchema),
+  accelerator: Schema.optional(Schema.Unknown),
+  provenance: Schema.optional(ProvenanceSchema),
 });
 
 export const LaunchPointerSchema = Schema.Struct({
@@ -59,6 +78,7 @@ export const RecipePointerSchema = Schema.Struct({
   id: Schema.String,
   launch: Schema.optional(LaunchPointerSchema),
   engine: Schema.optional(EnginePointerSchema),
+  provenance: Schema.optional(ProvenanceSchema),
 });
 
 export const SpeedEvidenceSchema = Schema.Struct({
