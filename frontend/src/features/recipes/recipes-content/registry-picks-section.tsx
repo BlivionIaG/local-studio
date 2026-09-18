@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { DownloadCloud } from "@/ui/icon-registry";
+import { DownloadCloud, RefreshCw } from "@/ui/icon-registry";
 import { ModelButton } from "@/ui";
 import { ModelLogo } from "@/ui/model-logo";
 import { useMountSubscription } from "@/hooks/use-mount-subscription";
@@ -17,6 +17,29 @@ interface RegistryPicksMeta {
   readonly updated: string | null;
 }
 
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface CacheEntry {
+  readonly result: RegistryPicksMeta;
+  readonly expiresAt: number;
+}
+
+const registryPicksCache = new Map<string, CacheEntry>();
+
+const readCache = (key: string): RegistryPicksMeta | null => {
+  const entry = registryPicksCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    registryPicksCache.delete(key);
+    return null;
+  }
+  return entry.result;
+};
+
+const writeCache = (key: string, result: RegistryPicksMeta): void => {
+  registryPicksCache.set(key, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+};
+
 export function RegistryPicksSection() {
   const hardware = useHardwareProfile();
   const realtimeSnapshot = useRealtimeStatusStore();
@@ -24,14 +47,14 @@ export function RegistryPicksSection() {
   const { downloadsByModel, startingModelIds, startDownload } = useDownloads();
   const [meta, setMeta] = useState<RegistryPicksMeta>({ picks: [], updated: null });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    if (hardware.poolGb <= 0) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    try {
+  const refresh = useCallback(
+    async (force = false) => {
+      if (hardware.poolGb <= 0) {
+        setLoading(false);
+        return;
+      }
       const gpuName = realtimeGpus[0]?.name ?? "";
       const params = new URLSearchParams({
         poolGb: String(Math.round(hardware.poolGb)),
@@ -41,20 +64,40 @@ export function RegistryPicksSection() {
         limit: "6",
       });
       if (gpuName) params.set("gpuName", gpuName);
-      const response = await fetch(`/api/setup/recommendations?${params}`, {
-        cache: "no-store",
-      });
-      const payload = await safeJson<{
-        picks?: SetupRecommendation[];
-        updated?: string;
-      }>(response);
-      setMeta({ picks: payload.picks ?? [], updated: payload.updated ?? null });
-    } catch {
-      setMeta({ picks: [], updated: null });
-    } finally {
-      setLoading(false);
-    }
-  }, [hardware.appleSilicon, hardware.gpuCount, hardware.poolGb, realtimeGpus]);
+      const url = `/api/setup/recommendations?${params}`;
+
+      if (!force) {
+        const cached = readCache(url);
+        if (cached) {
+          setMeta(cached);
+          setError(null);
+          setLoading(false);
+          return;
+        }
+      }
+
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(url, { cache: "no-store" });
+        const payload = await safeJson<{
+          picks?: SetupRecommendation[];
+          updated?: string;
+        }>(response);
+        const result: RegistryPicksMeta = {
+          picks: payload.picks ?? [],
+          updated: payload.updated ?? null,
+        };
+        setMeta(result);
+        writeCache(url, result);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load registry picks");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [hardware.appleSilicon, hardware.gpuCount, hardware.poolGb, realtimeGpus],
+  );
 
   useMountSubscription(() => {
     void refresh();
@@ -67,34 +110,62 @@ export function RegistryPicksSection() {
     [startDownload],
   );
 
-  if (hardware.poolGb <= 0 || meta.picks.length === 0) return null;
-
   return (
-    <div className="space-y-3">
-      <div className="flex items-baseline justify-between px-1">
-        <span className="font-mono text-[length:var(--fs-sm)] text-(--ui-muted)">
-          Live from registry
-        </span>
-        {meta.updated ? (
-          <span
-            className="font-mono text-[11px] text-(--ui-muted)"
-            title="Registry snapshot date; older dates mean the embedded fallback was used"
-          >
-            updated {meta.updated}
+    <div className="space-y-7">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-(--ui-separator) pb-3">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className="text-[length:var(--fs-md)] text-(--ui-fg)" title={hardware.detail}>
+            {hardware.poolGb > 0 ? `${Math.round(hardware.poolGb)} GB pool` : "No GPUs detected"}
           </span>
-        ) : null}
+          <span className="truncate text-[length:var(--fs-sm)] text-(--ui-muted)">
+            {hardware.poolGb > 0
+              ? `${hardware.label} — recipes that fit your ${Math.round(hardware.poolGb)} GB pool`
+              : "Connect the controller to check hardware fit."}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          {meta.updated ? (
+            <span className="text-[length:var(--fs-xs)] text-(--ui-muted)/70">
+              updated {meta.updated}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void refresh(true)}
+            disabled={loading}
+            title="Reload from registry"
+            aria-label="Reload from registry"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-(--ui-muted) transition-colors hover:bg-(--ui-hover) hover:text-(--ui-fg) disabled:opacity-45"
+          >
+            <RefreshCw className={cx("h-3.5 w-3.5", loading ? "animate-spin" : "")} />
+          </button>
+        </div>
       </div>
-      <div className="overflow-hidden rounded-[10px] border border-(--ui-border) bg-(--ui-surface)/25">
-        {meta.picks.map((pick) => (
-          <RegistryPickRow
-            key={pick.hfId}
-            pick={pick}
-            isStarting={startingModelIds.has(pick.hfId)}
-            download={downloadsByModel.get(pick.hfId) ?? null}
-            onDownload={handleDownload}
-          />
-        ))}
-      </div>
+
+      {error ? <div className="text-[length:var(--fs-sm)] text-(--err)">{error}</div> : null}
+
+      {!loading && meta.picks.length === 0 ? (
+        <div className="text-[length:var(--fs-sm)] text-(--ui-muted)">
+          No registry recipes matched your hardware. Try the Recommended tab for the curated
+          catalog.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-[10px] border border-(--ui-border) bg-(--ui-surface)/25">
+          {meta.picks.map((pick) => (
+            <RegistryPickRow
+              key={pick.hfId}
+              pick={pick}
+              isStarting={startingModelIds.has(pick.hfId)}
+              download={downloadsByModel.get(pick.hfId) ?? null}
+              onDownload={handleDownload}
+            />
+          ))}
+        </div>
+      )}
+
+      <p className="text-[length:var(--fs-xs)] text-(--dim)/70">
+        Source — local-ai-registry. Refresh above to re-query.
+      </p>
     </div>
   );
 }
