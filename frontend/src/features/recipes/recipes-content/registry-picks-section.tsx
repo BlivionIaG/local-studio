@@ -397,11 +397,18 @@ function RegistryModelDrawer({
       title={model.name}
       icon={<ModelLogo modelId={model.hfId} author={model.owner} label={model.name} size="sm" />}
       badge={
-        validatedCount > 0 ? (
-          <StatusPill tone="good">{validatedCount} validated</StatusPill>
-        ) : (
-          <StatusPill tone="info">candidate</StatusPill>
-        )
+        <div className="flex items-center gap-1.5">
+          {model.engines.map((engine) => (
+            <StatusPill key={engine} tone="default">
+              {engine}
+            </StatusPill>
+          ))}
+          {validatedCount > 0 ? (
+            <StatusPill tone="good">{validatedCount} validated</StatusPill>
+          ) : (
+            <StatusPill tone="info">candidate</StatusPill>
+          )}
+        </div>
       }
       status={`${model.owner} · ${formatParams(model.params, model.activeParams)}`}
       footer={
@@ -411,12 +418,6 @@ function RegistryModelDrawer({
       }
       onClose={onClose}
     >
-      <p className="text-[length:var(--fs-md)] leading-6 text-(--ui-muted)">
-        {model.engines.length > 0
-          ? `Engine${model.engines.length === 1 ? "" : "s"}: ${model.engines.join(", ")}.`
-          : "No engine listed in the registry for this hardware."}
-      </p>
-
       <ResourceDrawerSection
         title={`Variants (${model.variants.length})`}
         description="Pick the build that fits your rig and start the download."
