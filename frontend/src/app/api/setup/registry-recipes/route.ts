@@ -21,6 +21,7 @@ const nextFetch: RegistryFetchEffect = (url, init) =>
   });
 
 export interface RegistryRecipeRow {
+  recipeId: string;
   hfId: string;
   name: string;
   quant: string;
@@ -84,6 +85,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   const rows: RegistryRecipeRow[] = result.picks.slice(0, limit).map((pick) => ({
+    recipeId: pick.recipeId,
     hfId: pick.hfId,
     name: pick.name,
     quant: pick.quant,

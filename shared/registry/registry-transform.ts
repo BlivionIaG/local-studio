@@ -12,6 +12,7 @@ const AWQ_FAMILY_RE = /^(mq4|mq4-awq|awq)/i;
 const EXL3_RE = /^(exl3|.*bpw.*exl3|.*\d+\s*bpw)/i;
 
 export interface EnrichedRegistryPick {
+  readonly recipeId: string;
   readonly hfId: string;
   readonly name: string;
   readonly quant: QuantKind;
@@ -60,6 +61,7 @@ export const transformCompactRowsEnriched = (
     const caps = row.recipe.capabilities;
     const serving = row.recipe.serving;
     picks.push({
+      recipeId: row.id,
       hfId: repository,
       name: row.model.name ?? repository.split("/").at(-1) ?? repository,
       quant: precisionToQuant(

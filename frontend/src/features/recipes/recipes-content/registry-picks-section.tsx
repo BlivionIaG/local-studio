@@ -24,6 +24,7 @@ import { useHardwareProfile } from "./picks-shared";
 import { downloadProgressText } from "./downloads-tab";
 
 interface RegistryRecipeRow {
+  recipeId: string;
   hfId: string;
   name: string;
   quant: string;
@@ -238,7 +239,7 @@ export function RegistryPicksSection() {
               />
               {group.rows.map((pick) => (
                 <RegistryTableRow
-                  key={`${pick.hfId}/${pick.hardwareId}/${pick.engine ?? "?"}/${pick.quant}`}
+                  key={pick.recipeId}
                   pick={pick}
                   poolGb={hardware.poolGb}
                   isStarting={startingModelIds.has(pick.hfId)}
