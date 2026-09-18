@@ -13,6 +13,7 @@ import { cx } from "@/ui/utils";
 import {
   DataRow,
   EndCell,
+  GroupRow,
   HeadCell,
   LeadCell,
   NumCell,
@@ -120,6 +121,22 @@ const sizeRangeLabel = (variants: readonly RegistryModelVariant[]): string => {
   const max = Math.max(...sizes);
   const format = (n: number) => `${Math.round(n * 10) / 10}gb`;
   return min === max ? format(min) : `${format(min)}–${format(max)}`;
+};
+
+const groupModelsByEngine = (
+  models: readonly RegistryModel[],
+): Array<{ engine: string; models: RegistryModel[] }> => {
+  const order: string[] = [];
+  const byEngine = new Map<string, RegistryModel[]>();
+  for (const model of models) {
+    const engine = model.engines[0] ?? "unknown";
+    if (!byEngine.has(engine)) {
+      byEngine.set(engine, []);
+      order.push(engine);
+    }
+    byEngine.get(engine)!.push(model);
+  }
+  return order.map((engine) => ({ engine, models: byEngine.get(engine)! }));
 };
 
 export function RegistryPicksSection() {
@@ -250,57 +267,70 @@ export function RegistryPicksSection() {
               <HeadCell numeric>Status</HeadCell>
             </tr>
           </thead>
-          <tbody>
-            {meta.models.map((model) => (
-              <DataRow
-                key={model.hfId}
-                onOpen={() => setSelectedModel(model)}
-                ariaLabel={`Open ${model.name} variants`}
-              >
-                <LeadCell>
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <ModelLogo
-                      modelId={model.hfId}
-                      author={model.owner}
-                      label={model.name}
-                      size="sm"
-                      className="rounded-md"
-                    />
-                    <span className="min-w-0 truncate text-[length:var(--fs-md)] font-medium text-(--fg)">
-                      {model.name}
-                    </span>
-                    <span className="shrink-0 text-[length:var(--fs-sm)] text-(--dim)/70">
-                      {model.owner}
-                    </span>
-                    <span className="shrink-0 rounded border border-(--ui-border) px-1.5 py-px font-mono text-[length:var(--fs-xs)] text-(--ui-muted)">
-                      {model.variants.length} var
-                    </span>
-                  </div>
-                </LeadCell>
+          {groupModelsByEngine(meta.models).map((group) => {
+            const validatedCount = group.models.filter((model) =>
+              model.variants.some((v) => v.status === "validated"),
+            ).length;
+            return (
+              <tbody key={group.engine}>
+                <GroupRow
+                  colSpan={7}
+                  label={`${group.engine} recipes`}
+                  blurb={`${group.models.length} models`}
+                  right={validatedCount > 0 ? `${validatedCount} validated` : "candidate only"}
+                />
+                {group.models.map((model) => (
+                  <DataRow
+                    key={model.hfId}
+                    onOpen={() => setSelectedModel(model)}
+                    ariaLabel={`Open ${model.name} variants`}
+                  >
+                    <LeadCell>
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <ModelLogo
+                          modelId={model.hfId}
+                          author={model.owner}
+                          label={model.name}
+                          size="sm"
+                          className="rounded-md"
+                        />
+                        <span className="min-w-0 truncate text-[length:var(--fs-md)] font-medium text-(--fg)">
+                          {model.name}
+                        </span>
+                        <span className="shrink-0 text-[length:var(--fs-sm)] text-(--dim)/70">
+                          {model.owner}
+                        </span>
+                        <span className="shrink-0 rounded border border-(--ui-border) px-1.5 py-px font-mono text-[length:var(--fs-xs)] text-(--ui-muted)">
+                          {model.variants.length} var
+                        </span>
+                      </div>
+                    </LeadCell>
 
-                <NumCell>{model.engines.join(", ") || "—"}</NumCell>
+                    <NumCell>{model.engines.join(", ") || "—"}</NumCell>
 
-                <NumCell>
-                  <span className="text-[length:var(--fs-sm)] text-(--dim)/50">not rated</span>
-                </NumCell>
+                    <NumCell>
+                      <span className="text-[length:var(--fs-sm)] text-(--dim)/50">not rated</span>
+                    </NumCell>
 
-                <NumCell>{formatParams(model.params, model.activeParams)}</NumCell>
+                    <NumCell>{formatParams(model.params, model.activeParams)}</NumCell>
 
-                <NumCell>{formatContext(model.contextTokens)}</NumCell>
+                    <NumCell>{formatContext(model.contextTokens)}</NumCell>
 
-                <NumCell>{sizeRangeLabel(model.variants)}</NumCell>
+                    <NumCell>{sizeRangeLabel(model.variants)}</NumCell>
 
-                <EndCell>
-                  <ModelActions
-                    hfId={model.hfId}
-                    isStarting={startingModelIds.has(model.hfId)}
-                    download={downloadsByModel.get(model.hfId) ?? null}
-                    onDownload={() => handleDownload(model.hfId)}
-                  />
-                </EndCell>
-              </DataRow>
-            ))}
-          </tbody>
+                    <EndCell>
+                      <ModelActions
+                        hfId={model.hfId}
+                        isStarting={startingModelIds.has(model.hfId)}
+                        download={downloadsByModel.get(model.hfId) ?? null}
+                        onDownload={() => handleDownload(model.hfId)}
+                      />
+                    </EndCell>
+                  </DataRow>
+                ))}
+              </tbody>
+            );
+          })}
         </TableFrame>
       )}
 
