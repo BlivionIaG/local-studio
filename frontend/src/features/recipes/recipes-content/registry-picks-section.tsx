@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { DownloadCloud } from "@/ui/icon-registry";
 import { ModelButton } from "@/ui";
+import { ModelLogo } from "@/ui/model-logo";
 import { useMountSubscription } from "@/hooks/use-mount-subscription";
 import { useRealtimeStatusStore } from "@/hooks/realtime-status-store";
 import { safeJson } from "@/features/agent/safe-json";
@@ -111,8 +112,16 @@ function RegistryPickRow({
 }) {
   const busy = isStarting || download?.status === "downloading" || download?.status === "paused";
   const quantBadge = pick.quant.toUpperCase();
+  const owner = pick.hfId.split("/")[0]?.trim();
   return (
     <div className="group flex items-center gap-4 border-b border-(--ui-border)/60 px-4 py-3 transition-colors last:border-b-0 hover:bg-(--ui-hover)/40">
+      <ModelLogo
+        modelId={pick.hfId}
+        author={owner}
+        label={pick.name}
+        size="sm"
+        className="shrink-0"
+      />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="truncate text-[length:var(--fs-md)] text-(--fg)">{pick.name}</span>
