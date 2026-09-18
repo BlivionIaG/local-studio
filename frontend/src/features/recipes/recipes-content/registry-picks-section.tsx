@@ -28,6 +28,8 @@ interface RegistryRecipeRow {
   hfId: string;
   name: string;
   quant: string;
+  precision: string | null;
+  format: string | null;
   filesizeGb: number;
   filesize: string;
   requiredGb: number;
@@ -81,6 +83,21 @@ const formatContext = (tokens: number | null): string => {
   if (tokens == null) return "—";
   if (tokens >= 1024) return `${(tokens / 1024).toFixed(0)}K`;
   return tokens.toLocaleString();
+};
+
+const describeHardware = (hardware: {
+  gpuCount: number;
+  names: readonly string[];
+  appleSilicon: boolean;
+}): string => {
+  if (hardware.appleSilicon) return hardware.names[0] ?? "Apple Silicon";
+  if (hardware.names.length === 0) return "Unknown hardware";
+  const unique = Array.from(new Set(hardware.names));
+  const count = hardware.gpuCount;
+  if (unique.length === 1) {
+    return count > 1 ? `${count}× ${unique[0]}` : unique[0];
+  }
+  return count > 1 ? `${count} GPUs (${unique.join(" + ")})` : unique.join(" + ");
 };
 
 const groupByEngine = (
@@ -171,11 +188,13 @@ export function RegistryPicksSection() {
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-(--ui-separator) pb-3">
         <div className="flex min-w-0 items-baseline gap-2">
           <span className="text-[length:var(--fs-md)] text-(--ui-fg)" title={hardware.detail}>
-            {hardware.poolGb > 0 ? `${Math.round(hardware.poolGb)} GB pool` : "No GPUs detected"}
+            {hardware.poolGb > 0
+              ? `${describeHardware(hardware)} · ${Math.round(hardware.poolGb)} GB pool`
+              : "No GPUs detected"}
           </span>
           <span className="truncate text-[length:var(--fs-sm)] text-(--ui-muted)">
             {hardware.poolGb > 0
-              ? `${hardware.label} — recipes that fit your ${Math.round(hardware.poolGb)} GB pool`
+              ? `recipes that fit your ${Math.round(hardware.poolGb)} GB pool`
               : "Connect the controller to check hardware fit."}
           </span>
         </div>
@@ -276,6 +295,7 @@ function RegistryTableRow({
 }) {
   const owner = pick.hfId.split("/")[0]?.trim();
   const overPool = poolGb > 0 && pick.requiredGb > poolGb;
+  const badge = pick.precision ?? pick.format ?? pick.quant.toUpperCase();
   return (
     <DataRow dimmed={overPool} ariaLabel={`Open ${pick.name} details`}>
       <LeadCell>
@@ -292,7 +312,7 @@ function RegistryTableRow({
           </span>
           <span className="shrink-0 text-[length:var(--fs-sm)] text-(--dim)/70">{owner}</span>
           <span className="shrink-0 rounded border border-(--ui-border) px-1.5 py-px font-mono text-[length:var(--fs-xs)] text-(--ui-muted)">
-            {pick.quant.toUpperCase()}
+            {badge.toUpperCase()}
           </span>
         </div>
       </LeadCell>

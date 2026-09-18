@@ -25,6 +25,8 @@ export interface RegistryRecipeRow {
   hfId: string;
   name: string;
   quant: string;
+  precision: string | null;
+  format: string | null;
   filesizeGb: number;
   filesize: string;
   requiredGb: number;
@@ -89,6 +91,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     hfId: pick.hfId,
     name: pick.name,
     quant: pick.quant,
+    precision: pick.precision,
+    format: pick.format,
     filesizeGb: pick.filesizeGb,
     filesize: pick.filesize,
     requiredGb: pick.requiredGb,

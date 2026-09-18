@@ -16,6 +16,8 @@ export interface EnrichedRegistryPick {
   readonly hfId: string;
   readonly name: string;
   readonly quant: QuantKind;
+  readonly precision: string | null;
+  readonly format: string | null;
   readonly filesizeGb: number;
   readonly filesize: string;
   readonly requiredGb: number;
@@ -48,26 +50,31 @@ export const transformCompactRowsEnriched = (
 ): EnrichedRegistryPicks => {
   const updated = deriveUpdated(response.data);
   const picks: EnrichedRegistryPick[] = [];
+  const seen = new Set<string>();
   for (const row of response.data) {
     const repository = row.model.huggingface?.repository;
     if (!repository) continue;
     const filesizeGb = weightsToFilesizeGb(row.model_instance.weights);
     const requiredGb = Math.ceil(filesizeGb * 1.5);
-    const hardwareMinMemoryGb = hardwareMemoryGb(row.hardware);
     if (rig) {
       if (rig.hardwareId && row.hardware.id !== rig.hardwareId) continue;
       if (rig.poolGb > 0 && rig.poolGb < requiredGb) continue;
     }
+    const format = row.model_instance.weights?.format ?? null;
+    const precision = row.model_instance.weights?.precision ?? null;
+    const engineName = row.recipe.engine?.name ?? "";
+    const dedupeKey = `${repository}|${row.hardware.id}|${engineName}|${format ?? ""}|${precision ?? ""}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
     const caps = row.recipe.capabilities;
     const serving = row.recipe.serving;
     picks.push({
       recipeId: row.id,
       hfId: repository,
       name: row.model.name ?? repository.split("/").at(-1) ?? repository,
-      quant: precisionToQuant(
-        row.model_instance.weights?.format,
-        row.model_instance.weights?.precision,
-      ),
+      quant: precisionToQuant(format ?? undefined, precision ?? undefined),
+      precision,
+      format,
       filesizeGb,
       filesize: `${filesizeGb}gb`,
       requiredGb,
