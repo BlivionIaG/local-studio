@@ -1,4 +1,5 @@
 import type {
+  HardwareTarget,
   ModelRecommendation,
   ModelRecommendationsFile,
   QuantKind,
@@ -103,43 +104,70 @@ const deriveUpdated = (rows: readonly CompactRow[]): string => {
   return new Date().toISOString().slice(0, 10);
 };
 
+const buildHardwareTarget = (row: CompactRow): HardwareTarget => ({
+  id: row.hardware.id,
+  label: row.hardware.name ?? row.hardware.id,
+  minMemoryGb: hardwareMemoryGb(row.hardware),
+  gpuCount: 1,
+  unifiedMemory: isUnifiedMemory(row.hardware.id, row.hardware.vendor),
+  tested: true,
+});
+
+const dedupeHardware = (rows: Array<{ hardware: HardwareTarget }>): HardwareTarget[] => {
+  const byId = new Map<string, HardwareTarget>();
+  for (const row of rows) {
+    const target = row.hardware;
+    const existing = byId.get(target.id);
+    if (!existing) {
+      byId.set(target.id, target);
+    } else if (target.minMemoryGb > existing.minMemoryGb) {
+      byId.set(target.id, target);
+    }
+  }
+  return [...byId.values()];
+};
+
 export const transformCompactRows = (response: RecipeListResponse): ModelRecommendationsFile => {
-  const models: Record<string, ModelRecommendation> = {};
+  const groups = new Map<string, Array<{ row: CompactRow; rank: number }>>();
   response.data.forEach((row, index) => {
     const repository = row.model.huggingface?.repository;
     if (!repository) return;
-    const filesizeGb = Math.round(weightsToFilesizeGb(row.model_instance.weights) * 10) / 10;
-    const args = row.recipe.launch?.arguments ?? [];
+    const entry = { row, rank: index + 1 };
+    const existing = groups.get(repository);
+    if (existing) existing.push(entry);
+    else groups.set(repository, [entry]);
+  });
+
+  const models: Record<string, ModelRecommendation> = {};
+  for (const [repository, entries] of groups) {
+    const first = entries[0].row;
+    const filesizeGb = Math.round(weightsToFilesizeGb(first.model_instance.weights) * 10) / 10;
     const commands: Partial<Record<RecommendationEngine, string>> = {};
-    if (args.length > 0) {
-      commands[engineToRecommendationEngine(row.recipe.engine?.name)] = args.join(" ");
+    for (const entry of entries) {
+      const args = entry.row.recipe.launch?.arguments ?? [];
+      if (args.length > 0) {
+        commands[engineToRecommendationEngine(entry.row.recipe.engine?.name)] = args.join(" ");
+      }
     }
     models[repository] = {
-      name: row.model.name ?? repository.split("/").at(-1) ?? repository,
+      name: first.model.name ?? repository.split("/").at(-1) ?? repository,
       quant: precisionToQuant(
-        row.model_instance.weights?.format,
-        row.model_instance.weights?.precision,
+        first.model_instance.weights?.format,
+        first.model_instance.weights?.precision,
       ),
       filesizeGb,
       filesize: `${filesizeGb}gb`,
-      hardware: [
-        {
-          id: row.hardware.id,
-          label: row.hardware.name ?? row.hardware.id,
-          minMemoryGb: hardwareMemoryGb(row.hardware),
-          gpuCount: 1,
-          unifiedMemory: isUnifiedMemory(row.hardware.id, row.hardware.vendor),
-          tested: true,
-        },
-      ],
+      hardware: dedupeHardware(
+        entries.map((entry) => ({ hardware: buildHardwareTarget(entry.row) })),
+      ),
       commands,
-      rank: index + 1,
+      rank: Math.min(...entries.map((entry) => entry.rank)),
       benchmarks: [],
       expectSpeed: { decodeTps: null, prefillTps: null, source: "estimated" },
-      params: row.model.params != null ? String(row.model.params) : null,
+      params: first.model.params != null ? String(first.model.params) : null,
       notes: [],
     };
-  });
+  }
   return {
     version: 1,
     updated: deriveUpdated(response.data),
