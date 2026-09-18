@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { Effect } from "effect";
 import recommendationsSource from "@shared/model-recommendations.json";
 import {
   recommendationsForRig,
@@ -6,10 +7,24 @@ import {
   type ModelRecommendationsFile,
   type RigDescriptor,
 } from "@shared/model-recommendations";
+import { fetchRecipes, type RegistryFetchEffect } from "@shared/registry/registry-client";
+import { RegistryFetchError } from "@shared/registry/registry-schemas";
 
 // The full benchmark dataset stays server-side; the client receives only the handful of
 // display fields for picks that actually fit the caller's rig.
 const FILE = recommendationsSource as unknown as ModelRecommendationsFile;
+
+const nextFetch: RegistryFetchEffect = (url, init) =>
+  Effect.tryPromise({
+    try: (signal) =>
+      fetch(url, {
+        ...init,
+        next: { revalidate: 3600 },
+        signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+      }),
+    catch: (cause) =>
+      new RegistryFetchError({ message: `registry fetch failed: ${String(cause)}` }),
+  });
 
 export interface SetupRecommendationRow {
   hfId: string;
@@ -22,7 +37,7 @@ export interface SetupRecommendationRow {
   measuredOnThisClass: boolean;
 }
 
-export function GET(request: NextRequest): NextResponse {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const parameters = request.nextUrl.searchParams;
   const rig: RigDescriptor = {
     memoryPoolGb: Number(parameters.get("poolGb") ?? 0),
@@ -34,7 +49,11 @@ export function GET(request: NextRequest): NextResponse {
   if (!Number.isFinite(rig.memoryPoolGb) || rig.memoryPoolGb <= 0) {
     return NextResponse.json({ updated: FILE.updated, picks: [] });
   }
-  const picks: SetupRecommendationRow[] = recommendationsForRig(FILE, rig)
+  const registryFile = await Effect.runPromise(
+    fetchRecipes(nextFetch).pipe(Effect.catchCause(() => Effect.succeed(null))),
+  );
+  const file = registryFile ?? FILE;
+  const picks: SetupRecommendationRow[] = recommendationsForRig(file, rig)
     .slice(0, limit)
     .map((pick) => {
       const tested = pick.hardware.filter((target) => target.tested);
@@ -56,5 +75,5 @@ export function GET(request: NextRequest): NextResponse {
         measuredOnThisClass: pick.measuredOnThisClass,
       };
     });
-  return NextResponse.json({ updated: FILE.updated, picks });
+  return NextResponse.json({ updated: file.updated, picks });
 }
