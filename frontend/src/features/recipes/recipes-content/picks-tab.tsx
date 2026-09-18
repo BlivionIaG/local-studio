@@ -9,6 +9,7 @@ import { useDownloads } from "@/hooks/use-downloads";
 import { TableNotice, TableSkeleton } from "./catalog-table-shell";
 import { FIT_BUDGET_RATIO, formatGb } from "./model-fit";
 import { PicksCatalog, useHardwareProfile, useModelIndex } from "./picks-shared";
+import { RegistryPicksSection } from "./registry-picks-section";
 
 export function PicksTab() {
   const { data, loading, error, refresh } = useModelIndex();
@@ -69,6 +70,8 @@ export function PicksTab() {
       {downloadError ? (
         <div className="text-[length:var(--fs-sm)] text-(--err)">{downloadError}</div>
       ) : null}
+
+      <RegistryPicksSection />
 
       {loading && tiers.length === 0 ? (
         <PicksLoadingGrid />

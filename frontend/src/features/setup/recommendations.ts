@@ -44,11 +44,17 @@ export const rigFromDiagnostics = (
   };
 };
 
+export interface SetupRecommendationsMeta {
+  readonly picks: readonly SetupRecommendation[];
+  readonly updated: string | null;
+}
+
 export function useSetupRecommendations(
   diagnostics: StudioDiagnostics | null,
   maxVramGb: number,
-): readonly SetupRecommendation[] {
+): SetupRecommendationsMeta {
   const [picks, setPicks] = useState<readonly SetupRecommendation[]>([]);
+  const [updated, setUpdated] = useState<string | null>(null);
   const rig = rigFromDiagnostics(diagnostics, maxVramGb);
   const query = `poolGb=${Math.round(rig.poolGb)}&gpuCount=${rig.gpuCount}&unified=${rig.unified ? 1 : 0}&apple=${rig.apple ? 1 : 0}`;
 
@@ -56,17 +62,22 @@ export function useSetupRecommendations(
     if (rig.poolGb <= 0) return;
     let cancelled = false;
     void fetch(`/api/setup/recommendations?${query}`, { cache: "no-store" })
-      .then((response) => safeJson<{ picks?: SetupRecommendation[] }>(response))
+      .then((response) => safeJson<{ picks?: SetupRecommendation[]; updated?: string }>(response))
       .then((payload) => {
-        if (!cancelled) setPicks(payload.picks ?? []);
+        if (cancelled) return;
+        setPicks(payload.picks ?? []);
+        setUpdated(payload.updated ?? null);
       })
       .catch(() => {
-        if (!cancelled) setPicks([]);
+        if (!cancelled) {
+          setPicks([]);
+          setUpdated(null);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [query, rig.poolGb]);
 
-  return picks;
+  return { picks, updated };
 }

@@ -160,7 +160,7 @@ export function StepModel({
   beginVariantDownload: (modelId: string, allowPatterns?: string[]) => void;
   submitManualModel: () => void;
 }) {
-  const recommendations = useSetupRecommendations(diagnostics, maxVram);
+  const { picks: recommendations } = useSetupRecommendations(diagnostics, maxVram);
   const [showCatalog, setShowCatalog] = useState(false);
   const { data: catalog } = useModelIndex();
   const tiers = catalog?.tiers ?? [];
@@ -267,7 +267,9 @@ export function StepModel({
             variant="secondary"
             onClick={submitManualModel}
             disabled={resolvingManualModel}
-            icon={resolvingManualModel ? <Spinner size="xs" /> : <DownloadCloud className="h-4 w-4" />}
+            icon={
+              resolvingManualModel ? <Spinner size="xs" /> : <DownloadCloud className="h-4 w-4" />
+            }
           >
             {resolvingManualModel ? "Inspecting" : "Download"}
           </Button>
