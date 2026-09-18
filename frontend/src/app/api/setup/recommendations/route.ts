@@ -10,8 +10,6 @@ import {
 import { fetchRecipes, type RegistryFetchEffect } from "@shared/registry/registry-client";
 import { RegistryFetchError } from "@shared/registry/registry-schemas";
 
-// The full benchmark dataset stays server-side; the client receives only the handful of
-// display fields for picks that actually fit the caller's rig.
 const FILE = recommendationsSource as unknown as ModelRecommendationsFile;
 
 const nextFetch: RegistryFetchEffect = (url, init) =>
