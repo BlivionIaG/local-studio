@@ -44,6 +44,46 @@ export interface EnrichedRegistryPicks {
   readonly picks: readonly EnrichedRegistryPick[];
 }
 
+export interface RegistryModelVariant {
+  readonly recipeId: string;
+  readonly quant: QuantKind;
+  readonly precision: string | null;
+  readonly format: string | null;
+  readonly filesizeGb: number;
+  readonly filesize: string;
+  readonly requiredGb: number;
+  readonly status: "validated" | "candidate";
+  readonly engine: string | null;
+  readonly engineVersion: string | null;
+  readonly architecture: string | null;
+  readonly measuredOnThisClass: boolean;
+}
+
+export interface RegistryModel {
+  readonly hfId: string;
+  readonly name: string;
+  readonly owner: string;
+  readonly variants: readonly RegistryModelVariant[];
+  readonly bestVariant: RegistryModelVariant;
+  readonly params: string | null;
+  readonly activeParams: string | null;
+  readonly contextTokens: number | null;
+  readonly architecture: string | null;
+  readonly capabilities: {
+    readonly chat: boolean;
+    readonly reasoning: boolean;
+    readonly tools: boolean;
+    readonly vision: boolean;
+  };
+  readonly engines: readonly string[];
+  readonly measuredOnThisClass: boolean;
+}
+
+export interface RegistryModelsResponse {
+  readonly updated: string;
+  readonly models: readonly RegistryModel[];
+}
+
 export const transformCompactRowsEnriched = (
   response: RecipeListResponse,
   rig?: { poolGb: number; hardwareId: string | null },
@@ -97,6 +137,126 @@ export const transformCompactRowsEnriched = (
     });
   }
   return { updated, picks };
+};
+
+export const transformCompactRowsGroupedByModel = (
+  response: RecipeListResponse,
+  rig?: { poolGb: number; hardwareId: string | null },
+): RegistryModelsResponse => {
+  const updated = deriveUpdated(response.data);
+
+  const seenVariants = new Set<string>();
+  type VariantWithRepo = { variant: RegistryModelVariant; repo: string };
+  const variantsByRepo = new Map<string, VariantWithRepo[]>();
+  const repoMeta = new Map<
+    string,
+    {
+      name: string;
+      params: string | null;
+      activeParams: string | null;
+      contextTokens: number | null;
+      architecture: string | null;
+      capabilities: {
+        chat: boolean;
+        reasoning: boolean;
+        tools: boolean;
+        vision: boolean;
+      };
+    }
+  >();
+
+  for (const row of response.data) {
+    const repository = row.model.huggingface?.repository;
+    if (!repository) continue;
+
+    const filesizeGb = weightsToFilesizeGb(row.model_instance.weights);
+    const requiredGb = Math.ceil(filesizeGb * 1.5);
+    if (rig) {
+      if (rig.hardwareId && row.hardware.id !== rig.hardwareId) continue;
+      if (rig.poolGb > 0 && rig.poolGb < requiredGb) continue;
+    }
+
+    const format = row.model_instance.weights?.format ?? null;
+    const precision = row.model_instance.weights?.precision ?? null;
+    const engineName = row.recipe.engine?.name ?? "";
+    const dedupeKey = `${repository}|${row.hardware.id}|${engineName}|${format ?? ""}|${precision ?? ""}`;
+    if (seenVariants.has(dedupeKey)) continue;
+    seenVariants.add(dedupeKey);
+
+    const variant: RegistryModelVariant = {
+      recipeId: row.id,
+      quant: precisionToQuant(format ?? undefined, precision ?? undefined),
+      precision,
+      format,
+      filesizeGb,
+      filesize: `${filesizeGb}gb`,
+      requiredGb,
+      status: (row.recipe.status === "validated" ? "validated" : "candidate"),
+      engine: row.recipe.engine?.name ?? null,
+      engineVersion: row.recipe.engine?.version ?? null,
+      architecture: row.model.architecture ?? null,
+      measuredOnThisClass: row.hardware.id === rig?.hardwareId,
+    };
+
+    if (!variantsByRepo.has(repository)) {
+      variantsByRepo.set(repository, []);
+      const caps = row.recipe.capabilities;
+      repoMeta.set(repository, {
+        name: row.model.name ?? repository.split("/").at(-1) ?? repository,
+        params: row.model.params != null ? String(row.model.params) : null,
+        activeParams:
+          row.model.active_params != null ? String(row.model.active_params) : null,
+        contextTokens: row.recipe.serving?.max_context_tokens ?? null,
+        architecture: row.model.architecture ?? null,
+        capabilities: {
+          chat: caps?.chat ?? false,
+          reasoning: caps?.reasoning ?? false,
+          tools: caps?.tools ?? false,
+          vision: caps?.vision ?? false,
+        },
+      });
+    }
+    variantsByRepo.get(repository)!.push({ variant, repo: repository });
+  }
+
+  const models: RegistryModel[] = [];
+  for (const [hfId, entries] of variantsByRepo) {
+    const meta = repoMeta.get(hfId)!;
+    const variants = entries.map((e) => e.variant);
+    const validated = variants.find((v) => v.status === "validated");
+    const smallest =
+      variants.length === 0 ? undefined : [...variants].sort((a, b) => a.filesizeGb - b.filesizeGb)[0];
+    const bestVariant = validated ?? smallest ?? variants[0];
+    const engines = Array.from(
+      new Set(
+        variants
+          .map((v) => v.engine)
+          .filter((engine): engine is string => Boolean(engine)),
+      ),
+    );
+    models.push({
+      hfId,
+      name: meta.name,
+      owner: hfId.split("/")[0]?.trim() ?? "",
+      variants,
+      bestVariant,
+      params: meta.params,
+      activeParams: meta.activeParams,
+      contextTokens: meta.contextTokens,
+      architecture: meta.architecture,
+      capabilities: meta.capabilities,
+      engines,
+      measuredOnThisClass: variants.some((v) => v.measuredOnThisClass),
+    });
+  }
+
+  models.sort(
+    (a, b) =>
+      a.bestVariant.filesizeGb - b.bestVariant.filesizeGb ||
+      a.name.localeCompare(b.name),
+  );
+
+  return { updated, models };
 };
 
 const precisionToQuantFromPrecision = (precision: string | undefined): QuantKind => {
