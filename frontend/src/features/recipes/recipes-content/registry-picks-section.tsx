@@ -1,23 +1,27 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import {
-  DownloadCloud,
-  Eye,
-  MessageSquare,
-  RefreshCw,
-  Sparkles,
-  Wrench,
-  Brain,
-} from "@/ui/icon-registry";
-import { ModelButton, StatusPill } from "@/ui";
+import { DownloadCloud, RefreshCw } from "@/ui/icon-registry";
 import { ModelLogo } from "@/ui/model-logo";
+import { StatusPill } from "@/ui";
 import { useMountSubscription } from "@/hooks/use-mount-subscription";
 import { useRealtimeStatusStore } from "@/hooks/realtime-status-store";
 import { safeJson } from "@/features/agent/safe-json";
 import { useDownloads } from "@/hooks/use-downloads";
 import { cx } from "@/ui/utils";
+import {
+  DataRow,
+  EndCell,
+  GroupRow,
+  HeadCell,
+  LeadCell,
+  NumCell,
+  RowAction,
+  StatusText,
+  TableFrame,
+} from "./catalog-table-shell";
 import { useHardwareProfile } from "./picks-shared";
+import { downloadProgressText } from "./downloads-tab";
 
 interface RegistryRecipeRow {
   hfId: string;
@@ -78,10 +82,20 @@ const formatContext = (tokens: number | null): string => {
   return tokens.toLocaleString();
 };
 
-const formatParams = (params: string | null, active: string | null): string => {
-  if (!params) return "—";
-  if (active && active !== params) return `${active}A / ${params}B`;
-  return `${params}B`;
+const groupByEngine = (
+  picks: readonly RegistryRecipeRow[],
+): Array<{ engine: string; rows: RegistryRecipeRow[] }> => {
+  const order: string[] = [];
+  const byEngine = new Map<string, RegistryRecipeRow[]>();
+  for (const pick of picks) {
+    const engine = pick.engine ?? "unknown";
+    if (!byEngine.has(engine)) {
+      byEngine.set(engine, []);
+      order.push(engine);
+    }
+    byEngine.get(engine)!.push(pick);
+  }
+  return order.map((engine) => ({ engine, rows: byEngine.get(engine)! }));
 };
 
 export function RegistryPicksSection() {
@@ -147,6 +161,10 @@ export function RegistryPicksSection() {
     [startDownload],
   );
 
+  const groups = groupByEngine(meta.picks);
+  const validatedCount = meta.picks.filter((pick) => pick.status === "validated").length;
+  const runnableCount = meta.picks.filter((pick) => pick.requiredGb <= hardware.poolGb).length;
+
   return (
     <div className="space-y-7">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-(--ui-separator) pb-3">
@@ -187,115 +205,167 @@ export function RegistryPicksSection() {
           catalog.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-[10px] border border-(--ui-border) bg-(--ui-surface)/25">
-          <div className="grid grid-cols-[minmax(0,1.6fr)_auto_auto_auto_auto_auto_auto] items-center gap-3 border-b border-(--ui-border)/60 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-(--ui-muted)/70">
-            <span>Model</span>
-            <span className="text-right">Status</span>
-            <span className="text-right">Params</span>
-            <span className="text-right">Context</span>
-            <span className="text-right">Memory</span>
-            <span className="text-right">Caps</span>
-            <span></span>
-          </div>
-          {meta.picks.map((pick) => (
-            <RegistryRecipeTableRow
-              key={`${pick.hfId}/${pick.hardwareId}/${pick.engine ?? "?"}`}
-              pick={pick}
-              isStarting={startingModelIds.has(pick.hfId)}
-              download={downloadsByModel.get(pick.hfId) ?? null}
-              onDownload={handleDownload}
-            />
+        <TableFrame>
+          <thead>
+            <tr>
+              <HeadCell>Model</HeadCell>
+              <HeadCell numeric title="No intelligence index is published for registry recipes">
+                Index
+              </HeadCell>
+              <HeadCell numeric>Params</HeadCell>
+              <HeadCell numeric>Context</HeadCell>
+              <HeadCell numeric title="Memory the weights need; 1.5x is the runnable headroom">
+                Memory
+              </HeadCell>
+              <HeadCell numeric>Status</HeadCell>
+            </tr>
+          </thead>
+          {groups.map((group) => (
+            <tbody key={group.engine}>
+              <GroupRow
+                colSpan={6}
+                label={`${group.engine} recipes`}
+                blurb={
+                  hardware.poolGb > 0
+                    ? `${group.rows.filter((row) => row.requiredGb <= hardware.poolGb).length} of ${group.rows.length} run on this rig`
+                    : `${group.rows.length} recipes`
+                }
+                right={
+                  group.rows.filter((row) => row.status === "validated").length > 0
+                    ? `${group.rows.filter((row) => row.status === "validated").length} validated`
+                    : "candidate only"
+                }
+              />
+              {group.rows.map((pick) => (
+                <RegistryTableRow
+                  key={`${pick.hfId}/${pick.hardwareId}/${pick.engine ?? "?"}/${pick.quant}`}
+                  pick={pick}
+                  poolGb={hardware.poolGb}
+                  isStarting={startingModelIds.has(pick.hfId)}
+                  download={downloadsByModel.get(pick.hfId) ?? null}
+                  onDownload={handleDownload}
+                />
+              ))}
+            </tbody>
           ))}
-        </div>
+        </TableFrame>
       )}
 
       <p className="text-[length:var(--fs-xs)] text-(--dim)/70">
-        Source — local-ai-registry. Refresh above to re-query.
+        {meta.picks.length > 0
+          ? `Index — registry. ${validatedCount} validated, ${runnableCount} of ${meta.picks.length} fit in ${Math.round(hardware.poolGb)} GB. Refresh above to re-query.`
+          : "Index — registry. Refresh above to re-query."}
       </p>
     </div>
   );
 }
 
-function RegistryRecipeTableRow({
+function RegistryTableRow({
   pick,
+  poolGb,
   isStarting,
   download,
   onDownload,
 }: {
   pick: RegistryRecipeRow;
+  poolGb: number;
   isStarting: boolean;
   download: { status: string } | null;
   onDownload: (hfId: string) => void;
 }) {
-  const busy = isStarting || download?.status === "downloading" || download?.status === "paused";
-  const quantBadge = pick.quant.toUpperCase();
   const owner = pick.hfId.split("/")[0]?.trim();
+  const overPool = poolGb > 0 && pick.requiredGb > poolGb;
   return (
-    <div className="group grid grid-cols-[minmax(0,1.6fr)_auto_auto_auto_auto_auto_auto] items-center gap-3 border-b border-(--ui-border)/60 px-4 py-3 transition-colors last:border-b-0 hover:bg-(--ui-hover)/40">
-      <div className="flex min-w-0 items-center gap-3">
-        <ModelLogo
-          modelId={pick.hfId}
-          author={owner}
-          label={pick.name}
-          size="sm"
-          className="shrink-0"
-        />
-        <div className="min-w-0">
-          <div className="flex items-baseline gap-2">
-            <span className="truncate text-[length:var(--fs-md)] text-(--fg)">{pick.name}</span>
-            <span className="shrink-0 rounded border border-(--ui-border) px-1.5 py-px font-mono text-[length:var(--fs-sm)] text-(--ui-muted)">
-              {quantBadge}
-            </span>
-          </div>
-          <div className="mt-0.5 font-mono text-[11px] text-(--ui-muted)/80">
-            {pick.hfId} · {pick.hardwareLabel}
-          </div>
+    <DataRow dimmed={overPool} ariaLabel={`Open ${pick.name} details`}>
+      <LeadCell>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <ModelLogo
+            modelId={pick.hfId}
+            author={owner}
+            label={pick.name}
+            size="sm"
+            className="rounded-md"
+          />
+          <span className="min-w-0 truncate text-[length:var(--fs-md)] font-medium text-(--fg)">
+            {pick.name}
+          </span>
+          <span className="shrink-0 text-[length:var(--fs-sm)] text-(--dim)/70">{owner}</span>
+          <span className="shrink-0 rounded border border-(--ui-border) px-1.5 py-px font-mono text-[length:var(--fs-xs)] text-(--ui-muted)">
+            {pick.quant.toUpperCase()}
+          </span>
         </div>
-      </div>
-      <div className="text-right">
-        <StatusPill tone={pick.status === "validated" ? "good" : "info"}>{pick.status}</StatusPill>
-      </div>
-      <div className="text-right font-mono text-[11px] text-(--ui-muted)">
-        {formatParams(pick.params, pick.activeParams)}
-      </div>
-      <div className="text-right font-mono text-[11px] text-(--ui-muted)">
-        {formatContext(pick.contextTokens)}
-      </div>
-      <div className="text-right font-mono text-[11px] text-(--ui-muted)">{pick.filesize}</div>
-      <div className="flex justify-end gap-1">
-        {pick.capabilities.chat ? (
-          <span title="chat" className="text-(--ui-muted)">
-            <MessageSquare className="h-3.5 w-3.5" />
-          </span>
+      </LeadCell>
+
+      <NumCell>
+        <span className="text-[length:var(--fs-sm)] text-(--dim)/50">not rated</span>
+      </NumCell>
+
+      <NumCell>
+        {pick.params ? `${pick.params}B` : "—"}
+        {pick.activeParams && pick.activeParams !== pick.params ? (
+          <span className="text-(--dim)/60"> · {pick.activeParams}B active</span>
         ) : null}
-        {pick.capabilities.vision ? (
-          <span title="vision" className="text-(--ui-muted)">
-            <Eye className="h-3.5 w-3.5" />
-          </span>
-        ) : null}
-        {pick.capabilities.reasoning ? (
-          <span title="reasoning" className="text-(--ui-muted)">
-            <Brain className="h-3.5 w-3.5" />
-          </span>
-        ) : null}
-        {pick.capabilities.tools ? (
-          <span title="tools" className="text-(--ui-muted)">
-            <Wrench className="h-3.5 w-3.5" />
-          </span>
-        ) : null}
-        {!pick.capabilities.chat &&
-        !pick.capabilities.vision &&
-        !pick.capabilities.reasoning &&
-        !pick.capabilities.tools ? (
-          <span className="text-(--ui-muted)/40">—</span>
-        ) : null}
-      </div>
-      <div className="flex justify-end">
-        <ModelButton tone="primary" disabled={busy} onClick={() => onDownload(pick.hfId)}>
-          <DownloadCloud className={cx("h-3 w-3", busy ? "animate-pulse" : "")} />
-          {busy ? "Working" : "Download"}
-        </ModelButton>
-      </div>
+      </NumCell>
+
+      <NumCell>{formatContext(pick.contextTokens)}</NumCell>
+
+      <NumCell
+        sub={<PoolCell fit={{ over: overPool }} poolGb={poolGb} requiredGb={pick.requiredGb} />}
+      >
+        <span className="text-(--fg)">{pick.filesize}</span>
+      </NumCell>
+
+      <EndCell>
+        <RegistryStatusCell
+          status={pick.status}
+          download={download}
+          isStarting={isStarting}
+          onDownload={() => onDownload(pick.hfId)}
+        />
+      </EndCell>
+    </DataRow>
+  );
+}
+
+function PoolCell({
+  fit,
+  poolGb,
+  requiredGb,
+}: {
+  fit: { over: boolean };
+  poolGb: number;
+  requiredGb: number;
+}) {
+  if (poolGb <= 0 || requiredGb <= 0) return <span>—</span>;
+  if (fit.over) return <span>over pool</span>;
+  const percent = (requiredGb / poolGb) * 100;
+  return <span>{percent < 1 ? "<1% of pool" : `${Math.round(percent)}% of pool`}</span>;
+}
+
+function RegistryStatusCell({
+  status,
+  download,
+  isStarting,
+  onDownload,
+}: {
+  status: "validated" | "candidate";
+  download: { status: string } | null;
+  isStarting: boolean;
+  onDownload: () => void;
+}) {
+  if (isStarting) return <StatusText>starting…</StatusText>;
+  if (download?.status === "downloading" || download?.status === "paused") {
+    return <StatusText>{downloadProgressText(download as never)}</StatusText>;
+  }
+  if (download?.status === "completed") return <StatusText>on disk</StatusText>;
+  if (download?.status === "failed") return <StatusText tone="error">failed</StatusText>;
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <StatusPill tone={status === "validated" ? "good" : "info"}>{status}</StatusPill>
+      <RowAction onClick={onDownload}>
+        <DownloadCloud className="h-3 w-3" />
+        Download
+      </RowAction>
     </div>
   );
 }
