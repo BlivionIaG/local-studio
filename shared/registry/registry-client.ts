@@ -8,6 +8,7 @@ import {
   RegistryTimeoutError,
   type RegistryError,
 } from "./registry-schemas";
+import type { RecipeListResponse } from "./registry-schemas";
 import { transformCompactRows } from "./registry-transform";
 
 export type RegistryFetchEffect = (
@@ -30,19 +31,24 @@ export const REGISTRY_BASE_URL = "https://local-ai-registry.vercel.app/api/v1";
 
 export const REGISTRY_TIMEOUT_MS = 3000;
 
-export const fetchRecipes = (
+const buildRecipesUrl = (hardwareId: string | undefined): URL => {
+  const url = new URL(`${REGISTRY_BASE_URL}/recipes`);
+  if (hardwareId) {
+    url.searchParams.set("hardware", hardwareId);
+    url.searchParams.set("limit", "100");
+  } else {
+    url.searchParams.set("launchable", "true");
+    url.searchParams.set("limit", "100");
+  }
+  return url;
+};
+
+export const fetchRecipesRaw = (
   fetchImpl: RegistryFetchEffect = fetchEffect,
   hardwareId?: string,
-): Effect.Effect<ModelRecommendationsFile, RegistryError> =>
+): Effect.Effect<RecipeListResponse, RegistryError> =>
   Effect.gen(function* () {
-    const url = new URL(`${REGISTRY_BASE_URL}/recipes`);
-    if (hardwareId) {
-      url.searchParams.set("hardware", hardwareId);
-      url.searchParams.set("limit", "100");
-    } else {
-      url.searchParams.set("launchable", "true");
-      url.searchParams.set("limit", "100");
-    }
+    const url = buildRecipesUrl(hardwareId);
     const response = yield* fetchImpl(url.toString());
     if (!response.ok) {
       return yield* Effect.fail(
@@ -54,13 +60,12 @@ export const fetchRecipes = (
       catch: (cause) =>
         new RegistryDecodeError({ message: `registry JSON parse failed: ${String(cause)}` }),
     });
-    const decoded = yield* Schema.decodeUnknownEffect(RecipeListResponseSchema)(body).pipe(
+    return yield* Schema.decodeUnknownEffect(RecipeListResponseSchema)(body).pipe(
       Effect.mapError(
         (cause) =>
           new RegistryDecodeError({ message: `registry schema decode failed: ${String(cause)}` }),
       ),
     );
-    return transformCompactRows(decoded);
   }).pipe(
     Effect.timeoutOrElse({
       duration: Duration.millis(REGISTRY_TIMEOUT_MS),
@@ -72,6 +77,12 @@ export const fetchRecipes = (
         ),
     }),
   );
+
+export const fetchRecipes = (
+  fetchImpl: RegistryFetchEffect = fetchEffect,
+  hardwareId?: string,
+): Effect.Effect<ModelRecommendationsFile, RegistryError> =>
+  fetchRecipesRaw(fetchImpl, hardwareId).pipe(Effect.map(transformCompactRows));
 
 const stripVendorPrefix = (name: string): string =>
   name.replace(/^(amd|nvidia|intel|apple)\s+/i, "").trim();

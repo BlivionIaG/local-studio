@@ -11,6 +11,85 @@ const GGUF_QUANT_RE = /^(q[0-9]|iq[0-9]|ud-q|aq)/i;
 const AWQ_FAMILY_RE = /^(mq4|mq4-awq|awq)/i;
 const EXL3_RE = /^(exl3|.*bpw.*exl3|.*\d+\s*bpw)/i;
 
+export interface EnrichedRegistryPick {
+  readonly hfId: string;
+  readonly name: string;
+  readonly quant: QuantKind;
+  readonly filesizeGb: number;
+  readonly filesize: string;
+  readonly requiredGb: number;
+  readonly status: "validated" | "candidate";
+  readonly params: string | null;
+  readonly activeParams: string | null;
+  readonly contextTokens: number | null;
+  readonly architecture: string | null;
+  readonly capabilities: {
+    readonly chat: boolean;
+    readonly reasoning: boolean;
+    readonly tools: boolean;
+    readonly vision: boolean;
+  };
+  readonly engine: string | null;
+  readonly engineVersion: string | null;
+  readonly hardwareId: string;
+  readonly hardwareLabel: string;
+  readonly measuredOnThisClass: boolean;
+}
+
+export interface EnrichedRegistryPicks {
+  readonly updated: string;
+  readonly picks: readonly EnrichedRegistryPick[];
+}
+
+export const transformCompactRowsEnriched = (
+  response: RecipeListResponse,
+  rig?: { poolGb: number; hardwareId: string | null },
+): EnrichedRegistryPicks => {
+  const updated = deriveUpdated(response.data);
+  const picks: EnrichedRegistryPick[] = [];
+  for (const row of response.data) {
+    const repository = row.model.huggingface?.repository;
+    if (!repository) continue;
+    const filesizeGb = weightsToFilesizeGb(row.model_instance.weights);
+    const requiredGb = Math.ceil(filesizeGb * 1.5);
+    const hardwareMinMemoryGb = hardwareMemoryGb(row.hardware);
+    if (rig) {
+      if (rig.hardwareId && row.hardware.id !== rig.hardwareId) continue;
+      if (rig.poolGb > 0 && rig.poolGb < requiredGb) continue;
+    }
+    const caps = row.recipe.capabilities;
+    const serving = row.recipe.serving;
+    picks.push({
+      hfId: repository,
+      name: row.model.name ?? repository.split("/").at(-1) ?? repository,
+      quant: precisionToQuant(
+        row.model_instance.weights?.format,
+        row.model_instance.weights?.precision,
+      ),
+      filesizeGb,
+      filesize: `${filesizeGb}gb`,
+      requiredGb,
+      status: (row.recipe.status === "validated" ? "validated" : "candidate"),
+      params: row.model.params != null ? String(row.model.params) : null,
+      activeParams: row.model.active_params != null ? String(row.model.active_params) : null,
+      contextTokens: serving?.max_context_tokens ?? null,
+      architecture: row.model.architecture ?? null,
+      capabilities: {
+        chat: caps?.chat ?? false,
+        reasoning: caps?.reasoning ?? false,
+        tools: caps?.tools ?? false,
+        vision: caps?.vision ?? false,
+      },
+      engine: row.recipe.engine?.name ?? null,
+      engineVersion: row.recipe.engine?.version ?? null,
+      hardwareId: row.hardware.id,
+      hardwareLabel: row.hardware.name ?? row.hardware.id,
+      measuredOnThisClass: row.hardware.id === rig?.hardwareId,
+    });
+  }
+  return { updated, picks };
+};
+
 const precisionToQuantFromPrecision = (precision: string | undefined): QuantKind => {
   if (!precision) return "bf16";
   const p = precision.toLowerCase();

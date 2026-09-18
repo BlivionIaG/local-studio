@@ -1,43 +1,87 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { DownloadCloud, RefreshCw } from "@/ui/icon-registry";
-import { ModelButton } from "@/ui";
+import {
+  DownloadCloud,
+  Eye,
+  MessageSquare,
+  RefreshCw,
+  Sparkles,
+  Wrench,
+  Brain,
+} from "@/ui/icon-registry";
+import { ModelButton, StatusPill } from "@/ui";
 import { ModelLogo } from "@/ui/model-logo";
 import { useMountSubscription } from "@/hooks/use-mount-subscription";
 import { useRealtimeStatusStore } from "@/hooks/realtime-status-store";
 import { safeJson } from "@/features/agent/safe-json";
 import { useDownloads } from "@/hooks/use-downloads";
 import { cx } from "@/ui/utils";
-import type { SetupRecommendation } from "@/features/setup/recommendations";
 import { useHardwareProfile } from "./picks-shared";
 
-interface RegistryPicksMeta {
-  readonly picks: readonly SetupRecommendation[];
+interface RegistryRecipeRow {
+  hfId: string;
+  name: string;
+  quant: string;
+  filesizeGb: number;
+  filesize: string;
+  requiredGb: number;
+  status: "validated" | "candidate";
+  params: string | null;
+  activeParams: string | null;
+  contextTokens: number | null;
+  architecture: string | null;
+  capabilities: {
+    chat: boolean;
+    reasoning: boolean;
+    tools: boolean;
+    vision: boolean;
+  };
+  engine: string | null;
+  engineVersion: string | null;
+  hardwareId: string;
+  hardwareLabel: string;
+  measuredOnThisClass: boolean;
+}
+
+interface RegistryRecipesMeta {
   readonly updated: string | null;
+  readonly picks: readonly RegistryRecipeRow[];
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 interface CacheEntry {
-  readonly result: RegistryPicksMeta;
+  readonly result: RegistryRecipesMeta;
   readonly expiresAt: number;
 }
 
-const registryPicksCache = new Map<string, CacheEntry>();
+const registryRecipesCache = new Map<string, CacheEntry>();
 
-const readCache = (key: string): RegistryPicksMeta | null => {
-  const entry = registryPicksCache.get(key);
+const readCache = (key: string): RegistryRecipesMeta | null => {
+  const entry = registryRecipesCache.get(key);
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
-    registryPicksCache.delete(key);
+    registryRecipesCache.delete(key);
     return null;
   }
   return entry.result;
 };
 
-const writeCache = (key: string, result: RegistryPicksMeta): void => {
-  registryPicksCache.set(key, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+const writeCache = (key: string, result: RegistryRecipesMeta): void => {
+  registryRecipesCache.set(key, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+};
+
+const formatContext = (tokens: number | null): string => {
+  if (tokens == null) return "—";
+  if (tokens >= 1024) return `${(tokens / 1024).toFixed(0)}K`;
+  return tokens.toLocaleString();
+};
+
+const formatParams = (params: string | null, active: string | null): string => {
+  if (!params) return "—";
+  if (active && active !== params) return `${active}A / ${params}B`;
+  return `${params}B`;
 };
 
 export function RegistryPicksSection() {
@@ -45,7 +89,7 @@ export function RegistryPicksSection() {
   const realtimeSnapshot = useRealtimeStatusStore();
   const realtimeGpus = realtimeSnapshot.gpus;
   const { downloadsByModel, startingModelIds, startDownload } = useDownloads();
-  const [meta, setMeta] = useState<RegistryPicksMeta>({ picks: [], updated: null });
+  const [meta, setMeta] = useState<RegistryRecipesMeta>({ updated: null, picks: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,13 +102,9 @@ export function RegistryPicksSection() {
       const gpuName = realtimeGpus[0]?.name ?? "";
       const params = new URLSearchParams({
         poolGb: String(Math.round(hardware.poolGb)),
-        gpuCount: String(hardware.gpuCount),
-        unified: hardware.appleSilicon ? "1" : "0",
-        apple: hardware.appleSilicon ? "1" : "0",
-        limit: "6",
       });
       if (gpuName) params.set("gpuName", gpuName);
-      const url = `/api/setup/recommendations?${params}`;
+      const url = `/api/setup/registry-recipes?${params}`;
 
       if (!force) {
         const cached = readCache(url);
@@ -80,23 +120,20 @@ export function RegistryPicksSection() {
       setError(null);
       try {
         const response = await fetch(url, { cache: "no-store" });
-        const payload = await safeJson<{
-          picks?: SetupRecommendation[];
-          updated?: string;
-        }>(response);
-        const result: RegistryPicksMeta = {
-          picks: payload.picks ?? [],
+        const payload = await safeJson<RegistryRecipesMeta>(response);
+        const result: RegistryRecipesMeta = {
           updated: payload.updated ?? null,
+          picks: payload.picks ?? [],
         };
         setMeta(result);
         writeCache(url, result);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load registry picks");
+        setError(err instanceof Error ? err.message : "Failed to load registry recipes");
       } finally {
         setLoading(false);
       }
     },
-    [hardware.appleSilicon, hardware.gpuCount, hardware.poolGb, realtimeGpus],
+    [hardware.poolGb, realtimeGpus],
   );
 
   useMountSubscription(() => {
@@ -151,9 +188,18 @@ export function RegistryPicksSection() {
         </div>
       ) : (
         <div className="overflow-hidden rounded-[10px] border border-(--ui-border) bg-(--ui-surface)/25">
+          <div className="grid grid-cols-[minmax(0,1.6fr)_auto_auto_auto_auto_auto_auto] items-center gap-3 border-b border-(--ui-border)/60 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-(--ui-muted)/70">
+            <span>Model</span>
+            <span className="text-right">Status</span>
+            <span className="text-right">Params</span>
+            <span className="text-right">Context</span>
+            <span className="text-right">Memory</span>
+            <span className="text-right">Caps</span>
+            <span></span>
+          </div>
           {meta.picks.map((pick) => (
-            <RegistryPickRow
-              key={pick.hfId}
+            <RegistryRecipeTableRow
+              key={`${pick.hfId}/${pick.hardwareId}/${pick.engine ?? "?"}`}
               pick={pick}
               isStarting={startingModelIds.has(pick.hfId)}
               download={downloadsByModel.get(pick.hfId) ?? null}
@@ -170,13 +216,13 @@ export function RegistryPicksSection() {
   );
 }
 
-function RegistryPickRow({
+function RegistryRecipeTableRow({
   pick,
   isStarting,
   download,
   onDownload,
 }: {
-  pick: SetupRecommendation;
+  pick: RegistryRecipeRow;
   isStarting: boolean;
   download: { status: string } | null;
   onDownload: (hfId: string) => void;
@@ -185,37 +231,71 @@ function RegistryPickRow({
   const quantBadge = pick.quant.toUpperCase();
   const owner = pick.hfId.split("/")[0]?.trim();
   return (
-    <div className="group flex items-center gap-4 border-b border-(--ui-border)/60 px-4 py-3 transition-colors last:border-b-0 hover:bg-(--ui-hover)/40">
-      <ModelLogo
-        modelId={pick.hfId}
-        author={owner}
-        label={pick.name}
-        size="sm"
-        className="shrink-0"
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2">
-          <span className="truncate text-[length:var(--fs-md)] text-(--fg)">{pick.name}</span>
-          <span className="shrink-0 rounded border border-(--ui-border) px-1.5 py-px font-mono text-[length:var(--fs-sm)] text-(--ui-muted)">
-            {quantBadge}
-          </span>
-        </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 font-mono text-[11px] text-(--ui-muted)">
-          <span>{pick.filesize}</span>
-          <span>·</span>
-          <span>needs ~{pick.requiredGb} GB</span>
-          {pick.measuredOnThisClass ? (
-            <>
-              <span>·</span>
-              <span className="text-(--ui-success)">measured on your class</span>
-            </>
-          ) : null}
+    <div className="group grid grid-cols-[minmax(0,1.6fr)_auto_auto_auto_auto_auto_auto] items-center gap-3 border-b border-(--ui-border)/60 px-4 py-3 transition-colors last:border-b-0 hover:bg-(--ui-hover)/40">
+      <div className="flex min-w-0 items-center gap-3">
+        <ModelLogo
+          modelId={pick.hfId}
+          author={owner}
+          label={pick.name}
+          size="sm"
+          className="shrink-0"
+        />
+        <div className="min-w-0">
+          <div className="flex items-baseline gap-2">
+            <span className="truncate text-[length:var(--fs-md)] text-(--fg)">{pick.name}</span>
+            <span className="shrink-0 rounded border border-(--ui-border) px-1.5 py-px font-mono text-[length:var(--fs-sm)] text-(--ui-muted)">
+              {quantBadge}
+            </span>
+          </div>
+          <div className="mt-0.5 font-mono text-[11px] text-(--ui-muted)/80">
+            {pick.hfId} · {pick.hardwareLabel}
+          </div>
         </div>
       </div>
-      <ModelButton tone="primary" disabled={busy} onClick={() => onDownload(pick.hfId)}>
-        <DownloadCloud className={cx("h-3 w-3", busy ? "animate-pulse" : "")} />
-        {busy ? "Working" : "Download"}
-      </ModelButton>
+      <div className="text-right">
+        <StatusPill tone={pick.status === "validated" ? "good" : "info"}>{pick.status}</StatusPill>
+      </div>
+      <div className="text-right font-mono text-[11px] text-(--ui-muted)">
+        {formatParams(pick.params, pick.activeParams)}
+      </div>
+      <div className="text-right font-mono text-[11px] text-(--ui-muted)">
+        {formatContext(pick.contextTokens)}
+      </div>
+      <div className="text-right font-mono text-[11px] text-(--ui-muted)">{pick.filesize}</div>
+      <div className="flex justify-end gap-1">
+        {pick.capabilities.chat ? (
+          <span title="chat" className="text-(--ui-muted)">
+            <MessageSquare className="h-3.5 w-3.5" />
+          </span>
+        ) : null}
+        {pick.capabilities.vision ? (
+          <span title="vision" className="text-(--ui-muted)">
+            <Eye className="h-3.5 w-3.5" />
+          </span>
+        ) : null}
+        {pick.capabilities.reasoning ? (
+          <span title="reasoning" className="text-(--ui-muted)">
+            <Brain className="h-3.5 w-3.5" />
+          </span>
+        ) : null}
+        {pick.capabilities.tools ? (
+          <span title="tools" className="text-(--ui-muted)">
+            <Wrench className="h-3.5 w-3.5" />
+          </span>
+        ) : null}
+        {!pick.capabilities.chat &&
+        !pick.capabilities.vision &&
+        !pick.capabilities.reasoning &&
+        !pick.capabilities.tools ? (
+          <span className="text-(--ui-muted)/40">—</span>
+        ) : null}
+      </div>
+      <div className="flex justify-end">
+        <ModelButton tone="primary" disabled={busy} onClick={() => onDownload(pick.hfId)}>
+          <DownloadCloud className={cx("h-3 w-3", busy ? "animate-pulse" : "")} />
+          {busy ? "Working" : "Download"}
+        </ModelButton>
+      </div>
     </div>
   );
 }

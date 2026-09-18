@@ -29,7 +29,9 @@ export const ModelPointerSchema = Schema.Struct({
   id: Schema.String,
   name: Schema.optional(Schema.String),
   params: Schema.optional(Schema.NullOr(Schema.Number)),
+  active_params: Schema.optional(Schema.NullOr(Schema.Number)),
   family: Schema.optional(Schema.String),
+  architecture: Schema.optional(Schema.String),
   huggingface: Schema.optional(HuggingFacePointerSchema),
 });
 
@@ -72,12 +74,31 @@ export const LaunchPointerSchema = Schema.Struct({
 
 export const EnginePointerSchema = Schema.Struct({
   name: Schema.String,
+  version: Schema.optional(Schema.NullOr(Schema.String)),
+  graph_mode: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+export const RecipeCapabilitiesSchema = Schema.Struct({
+  chat: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  reasoning: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  tools: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  vision: Schema.optional(Schema.NullOr(Schema.Boolean)),
+});
+
+export const RecipeServingSchema = Schema.Struct({
+  kv_cache_tokens: Schema.optional(Schema.NullOr(Schema.Number)),
+  max_concurrency: Schema.optional(Schema.NullOr(Schema.Number)),
+  max_context_tokens: Schema.optional(Schema.NullOr(Schema.Number)),
+  tensor_parallel: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 
 export const RecipePointerSchema = Schema.Struct({
   id: Schema.String,
+  status: Schema.optional(Schema.String),
   launch: Schema.optional(LaunchPointerSchema),
   engine: Schema.optional(EnginePointerSchema),
+  capabilities: Schema.optional(RecipeCapabilitiesSchema),
+  serving: Schema.optional(RecipeServingSchema),
   provenance: Schema.optional(ProvenanceSchema),
 });
 
