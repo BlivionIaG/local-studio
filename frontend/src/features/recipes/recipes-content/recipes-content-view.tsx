@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Download, Search, Server, Sparkles } from "@/ui/icon-registry";
+import { Download, Globe, Search, Server, Sparkles } from "@/ui/icon-registry";
 import type { ModelDownload, ModelInfo, RecipeWithStatus, RuntimeTarget } from "@/lib/types";
 import type { RecipeEditor } from "@/features/recipes/recipe-editor";
 import { ConfirmDeleteModal, RefreshButton, TabbedPage, Tabs } from "@/ui";
@@ -13,6 +13,7 @@ import { RecipeModal } from "../recipe-modal/recipe-modal";
 import { ExploreTab } from "./explore-tab";
 import { DownloadsTab } from "./downloads-tab";
 import { PicksTab } from "./picks-tab";
+import { RegistryPicksSection } from "./registry-picks-section";
 
 type Props = {
   embedded?: boolean;
@@ -50,6 +51,7 @@ type Props = {
 // actually does, because "Picks / Get / Serves" told you nothing from outside.
 const MODEL_TABS: Array<{ id: RecipesContentTab; label: string; icon: ReactNode }> = [
   { id: "picks", label: "Recommended", icon: <Sparkles className="h-3.5 w-3.5" /> },
+  { id: "registry", label: "From registry", icon: <Globe className="h-3.5 w-3.5" /> },
   { id: "get", label: "Search Hugging Face", icon: <Search className="h-3.5 w-3.5" /> },
   { id: "serves", label: "Your servers", icon: <Server className="h-3.5 w-3.5" /> },
   { id: "downloads", label: "Downloads", icon: <Download className="h-3.5 w-3.5" /> },
@@ -60,6 +62,11 @@ const TAB_HEADINGS: Record<RecipesContentTab, { title: string; description: stri
     title: "Recommended models",
     description:
       "Hand-picked models grouped by the hardware they need, each checked against this machine's memory.",
+  },
+  registry: {
+    title: "Recipes from the registry",
+    description:
+      "Validated and candidate recipes from the local-ai-registry, filtered to your hardware. Falls back to the curated snapshot when the registry is unreachable.",
   },
   get: {
     title: "Search Hugging Face",
@@ -131,6 +138,8 @@ export function RecipesContentView(props: Props) {
           />
         ) : tab === "picks" ? (
           <PicksTab />
+        ) : tab === "registry" ? (
+          <RegistryPicksSection />
         ) : tab === "get" ? (
           <ExploreTab />
         ) : (

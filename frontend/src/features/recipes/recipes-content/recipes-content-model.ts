@@ -15,10 +15,12 @@ import type { RecipesTableProps } from "./types";
 import { useRecipesDerived } from "./use-recipes-derived";
 import { isRecipeActive } from "./launch-reconciliation";
 
-export type RecipesContentTab = "picks" | "get" | "serves" | "downloads";
+export type RecipesContentTab = "picks" | "registry" | "get" | "serves" | "downloads";
 
 const requestedTab = (value: string | null): RecipesContentTab =>
-  value === "get" || value === "serves" || value === "downloads" ? value : "picks";
+  value === "registry" || value === "get" || value === "serves" || value === "downloads"
+    ? value
+    : "picks";
 
 export function useRecipesContentModel() {
   const searchParams = useSearchParams();
