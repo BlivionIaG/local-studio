@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { DownloadCloud } from "@/ui/icon-registry";
 import { ModelButton } from "@/ui";
 import { useMountSubscription } from "@/hooks/use-mount-subscription";
+import { useRealtimeStatusStore } from "@/hooks/realtime-status-store";
 import { safeJson } from "@/features/agent/safe-json";
 import { useDownloads } from "@/hooks/use-downloads";
 import { cx } from "@/ui/utils";
@@ -17,6 +18,8 @@ interface RegistryPicksMeta {
 
 export function RegistryPicksSection() {
   const hardware = useHardwareProfile();
+  const realtimeSnapshot = useRealtimeStatusStore();
+  const realtimeGpus = realtimeSnapshot.gpus;
   const { downloadsByModel, startingModelIds, startDownload } = useDownloads();
   const [meta, setMeta] = useState<RegistryPicksMeta>({ picks: [], updated: null });
   const [loading, setLoading] = useState(true);
@@ -28,6 +31,7 @@ export function RegistryPicksSection() {
     }
     setLoading(true);
     try {
+      const gpuName = realtimeGpus[0]?.name ?? "";
       const params = new URLSearchParams({
         poolGb: String(Math.round(hardware.poolGb)),
         gpuCount: String(hardware.gpuCount),
@@ -35,6 +39,7 @@ export function RegistryPicksSection() {
         apple: hardware.appleSilicon ? "1" : "0",
         limit: "6",
       });
+      if (gpuName) params.set("gpuName", gpuName);
       const response = await fetch(`/api/setup/recommendations?${params}`, {
         cache: "no-store",
       });
@@ -48,7 +53,7 @@ export function RegistryPicksSection() {
     } finally {
       setLoading(false);
     }
-  }, [hardware.appleSilicon, hardware.gpuCount, hardware.poolGb]);
+  }, [hardware.appleSilicon, hardware.gpuCount, hardware.poolGb, realtimeGpus]);
 
   useMountSubscription(() => {
     void refresh();

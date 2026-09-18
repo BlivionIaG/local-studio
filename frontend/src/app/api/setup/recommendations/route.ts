@@ -7,7 +7,11 @@ import {
   type ModelRecommendationsFile,
   type RigDescriptor,
 } from "@shared/model-recommendations";
-import { fetchRecipes, type RegistryFetchEffect } from "@shared/registry/registry-client";
+import {
+  fetchRecipes,
+  lookupRegistryHardwareId,
+  type RegistryFetchEffect,
+} from "@shared/registry/registry-client";
 import { RegistryFetchError } from "@shared/registry/registry-schemas";
 
 const FILE = recommendationsSource as unknown as ModelRecommendationsFile;
@@ -44,11 +48,21 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     appleSilicon: parameters.get("apple") === "1",
   };
   const limit = Math.min(Number(parameters.get("limit") ?? 6), 20);
+  const gpuName = parameters.get("gpuName")?.trim() ?? "";
   if (!Number.isFinite(rig.memoryPoolGb) || rig.memoryPoolGb <= 0) {
     return NextResponse.json({ updated: FILE.updated, picks: [] });
   }
+  const hardwareId = gpuName
+    ? await Effect.runPromise(
+        lookupRegistryHardwareId(gpuName, nextFetch).pipe(
+          Effect.catchCause(() => Effect.succeed(null)),
+        ),
+      )
+    : null;
   const registryFile = await Effect.runPromise(
-    fetchRecipes(nextFetch).pipe(Effect.catchCause(() => Effect.succeed(null))),
+    fetchRecipes(nextFetch, hardwareId ?? undefined).pipe(
+      Effect.catchCause(() => Effect.succeed(null)),
+    ),
   );
   const file = registryFile ?? FILE;
   const picks: SetupRecommendationRow[] = recommendationsForRig(file, rig)

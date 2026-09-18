@@ -36,7 +36,7 @@ export const ModelPointerSchema = Schema.Struct({
 export const WeightsSchema = Schema.Struct({
   format: Schema.optional(Schema.String),
   precision: Schema.optional(Schema.String),
-  size_gb: Schema.optional(Schema.Number),
+  size_gb: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 
 export const ModelInstancePointerSchema = Schema.Struct({
@@ -86,6 +86,24 @@ export const SpeedEvidenceSchema = Schema.Struct({
   count: Schema.optional(Schema.Number),
   speed_sweep_ids: Schema.optional(Schema.Array(Schema.String)),
   detail_urls: Schema.optional(Schema.Array(Schema.String)),
+});
+
+export const RegistryHardwareSchema = Schema.Struct({
+  id: Schema.String,
+  name: Schema.optional(Schema.String),
+  vendor: Schema.optional(Schema.String),
+  memory_gb: Schema.optional(Schema.NullOr(Schema.Number)),
+  accelerator_memory_gb: Schema.optional(Schema.NullOr(Schema.Number)),
+});
+
+export const RegistryHardwareListResponseSchema = Schema.Struct({
+  data: Schema.Array(RegistryHardwareSchema),
+  meta: Schema.optional(
+    Schema.Struct({
+      source: Schema.optional(Schema.String),
+    }),
+  ),
+  links: Schema.optional(Schema.Unknown),
 });
 
 export const CompactRowSchema = Schema.Struct({

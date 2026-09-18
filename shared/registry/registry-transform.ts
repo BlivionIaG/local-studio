@@ -7,8 +7,16 @@ import type {
 } from "../model-recommendations";
 import type { CompactRow, RecipeListResponse } from "./registry-schemas";
 
+const GGUF_QUANT_RE = /^(q[0-9]|iq[0-9]|ud-q|aq)/i;
+const AWQ_FAMILY_RE = /^(mq4|mq4-awq|awq)/i;
+const EXL3_RE = /^(exl3|.*bpw.*exl3|.*\d+\s*bpw)/i;
+
 const precisionToQuantFromPrecision = (precision: string | undefined): QuantKind => {
-  switch (precision?.toLowerCase()) {
+  if (!precision) return "bf16";
+  const p = precision.toLowerCase();
+  if (p === "gguf" || GGUF_QUANT_RE.test(p)) return "gguf";
+  if (AWQ_FAMILY_RE.test(p)) return "awq";
+  switch (p) {
     case "bf16":
       return "bf16";
     case "fp8":
@@ -19,6 +27,11 @@ const precisionToQuantFromPrecision = (precision: string | undefined): QuantKind
       return "gptq";
     case "awq":
       return "awq";
+    case "mlx":
+      return "mlx";
+    case "exl3":
+    case "exl3 trellis tr3":
+      return "exl3";
     default:
       return "bf16";
   }
@@ -28,23 +41,33 @@ export const precisionToQuant = (
   format: string | undefined,
   precision: string | undefined,
 ): QuantKind => {
-  switch (format) {
-    case "safetensors":
-      return precisionToQuantFromPrecision(precision);
-    case "GGUF":
-      return "gguf";
-    case "GPTQ":
-      return "gptq";
-    case "AWQ":
-      return "awq";
-    case "ModelOpt":
-      return precisionToQuantFromPrecision(precision);
-    case "SGLang layered FP8":
-      return "fp8";
-    default:
-      if (format?.startsWith("EXL3")) return "exl3";
-      return "bf16";
+  if (format) {
+    switch (format) {
+      case "safetensors":
+        return precisionToQuantFromPrecision(precision);
+      case "GGUF":
+        return "gguf";
+      case "GPTQ":
+        return "gptq";
+      case "AWQ":
+        return "awq";
+      case "ModelOpt":
+        return precisionToQuantFromPrecision(precision);
+      case "SGLang layered FP8":
+        return "fp8";
+    }
+    if (format.startsWith("EXL3")) return "exl3";
   }
+  if (precision && (precision.toLowerCase() === "gguf" || GGUF_QUANT_RE.test(precision))) {
+    return "gguf";
+  }
+  if (precision && AWQ_FAMILY_RE.test(precision)) {
+    return "awq";
+  }
+  if (precision && EXL3_RE.test(precision.toLowerCase())) {
+    return "exl3";
+  }
+  return "bf16";
 };
 
 export const engineToRecommendationEngine = (
@@ -78,7 +101,7 @@ const isUnifiedMemory = (id: string, vendor: string | undefined): boolean => {
   return lowerVendor != null && lowerVendor.includes("apple");
 };
 
-export const weightsToFilesizeGb = (weights?: { size_gb?: number }): number =>
+export const weightsToFilesizeGb = (weights?: { size_gb?: number | null }): number =>
   weights?.size_gb ?? 0;
 
 export const hardwareMemoryGb = (hardware: {
