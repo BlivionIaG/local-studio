@@ -464,7 +464,6 @@ function VariantRow({
   onDownload: () => void;
 }) {
   const badge = (variant.precision ?? variant.format ?? variant.quant).toUpperCase();
-  const busy = isStarting || download?.status === "downloading" || download?.status === "paused";
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-(--ui-border)/40 py-3 last:border-b-0">
       <div className="min-w-0">
@@ -492,10 +491,22 @@ function VariantRow({
           {variant.recipeId}
         </div>
       </div>
-      <ModelButton tone="primary" disabled={busy} onClick={onDownload}>
-        <DownloadCloud className={cx("h-3 w-3", busy ? "animate-pulse" : "")} />
-        {busy ? "Working" : "Download"}
-      </ModelButton>
+      <div className="shrink-0">
+        {isStarting ? (
+          <StatusText>starting…</StatusText>
+        ) : download?.status === "downloading" || download?.status === "paused" ? (
+          <StatusText>{downloadProgressText(download as never)}</StatusText>
+        ) : download?.status === "completed" ? (
+          <StatusText>on disk</StatusText>
+        ) : download?.status === "failed" ? (
+          <StatusText tone="error">failed</StatusText>
+        ) : (
+          <ModelButton tone="primary" onClick={onDownload}>
+            <DownloadCloud className="h-3 w-3" />
+            Download
+          </ModelButton>
+        )}
+      </div>
     </div>
   );
 }
